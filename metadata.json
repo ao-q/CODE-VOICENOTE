@@ -1,0 +1,6 @@
+{
+  "name": "Voice Notes",
+  "description": "Stock-Android themed voice recording app with nested folders, synchronized in-recording note writing, high-fidelity audio, and sync keys.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
