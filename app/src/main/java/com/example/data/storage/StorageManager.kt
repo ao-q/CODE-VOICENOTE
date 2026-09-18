@@ -1,6 +1,7 @@
 package com.example.data.storage
 
 import android.content.Context
+import android.media.MediaScannerConnection
 import com.example.data.model.SyncKeyPayload
 import com.example.data.model.SyncTimestampItem
 import java.io.File
@@ -140,6 +141,7 @@ class StorageManager(private val context: Context) {
                 builder.append("\n")
             }
             notesFile.writeText(builder.toString(), Charsets.UTF_8)
+            notifyMediaScanner(notesFile)
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -151,6 +153,7 @@ class StorageManager(private val context: Context) {
     fun writeSyncKeysFile(syncKeyFile: File, payload: SyncKeyPayload) {
         try {
             syncKeyFile.writeText(payload.toJsonString(), Charsets.UTF_8)
+            notifyMediaScanner(syncKeyFile)
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -229,6 +232,7 @@ class StorageManager(private val context: Context) {
             timestamps = timestamps
         )
         writeSyncKeysFile(syncKeyFile, payload)
+        notifyMediaScanner(finalAudioFile, newNotesFile, syncKeyFile)
 
         return RenamedFileLocations(
             newFolderDirectory = newFolderDir,
@@ -252,6 +256,20 @@ class StorageManager(private val context: Context) {
         }
         val moved = currentFolderDir.renameTo(targetFolder)
         return if (moved) targetFolder else currentFolderDir
+    }
+
+    /**
+     * Notifies Android MediaStore and system file indexer so the files appear immediately in device file managers.
+     */
+    fun notifyMediaScanner(vararg files: File?) {
+        try {
+            val paths = files.filterNotNull().filter { it.exists() }.map { it.absolutePath }.toTypedArray()
+            if (paths.isNotEmpty()) {
+                MediaScannerConnection.scanFile(context, paths, null, null)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     /**

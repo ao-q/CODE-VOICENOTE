@@ -30,9 +30,10 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 data class VoiceNotesUiState(
-    val isStorageConfigured: Boolean = true,
+    val isStorageConfigured: Boolean = false,
     val showStorageConfigDialog: Boolean = false,
     val storageBaseDirectoryDisplay: String = "",
+    val friendlyStoragePath: String = "",
     val currentFolderId: Long? = null,
     val breadcrumbs: List<FolderEntity> = emptyList(),
     val searchQuery: String = "",
@@ -67,7 +68,8 @@ class VoiceNotesViewModel(application: Application) : AndroidViewModel(applicati
         VoiceNotesUiState(
             isStorageConfigured = storagePreferences.isStorageConfigured,
             showStorageConfigDialog = !storagePreferences.isStorageConfigured,
-            storageBaseDirectoryDisplay = storagePreferences.getEffectiveBaseDirectory().absolutePath
+            storageBaseDirectoryDisplay = storagePreferences.getEffectiveBaseDirectory().absolutePath,
+            friendlyStoragePath = storagePreferences.getFriendlyStoragePath()
         )
     )
     val uiState: StateFlow<VoiceNotesUiState> = _uiState.asStateFlow()
@@ -131,15 +133,25 @@ class VoiceNotesViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     // Storage Configuration
-    fun configureStorage(folderName: String, customPath: String?) {
-        storagePreferences.storageFolderName = folderName.ifBlank { "VoiceNotes" }
+    fun configureStorage(folderName: String, customPath: String?, treeUri: String? = null) {
+        val resolvedName = folderName.ifBlank { "VoiceNotes" }
+        storagePreferences.storageFolderName = resolvedName
         storagePreferences.customStoragePath = customPath
+        if (!treeUri.isNullOrBlank()) {
+            storagePreferences.storageTreeUri = treeUri
+        }
         storagePreferences.isStorageConfigured = true
+        val baseDir = storagePreferences.getEffectiveBaseDirectory()
+        if (!baseDir.exists()) {
+            baseDir.mkdirs()
+        }
+        val friendly = storagePreferences.getFriendlyStoragePath()
         _uiState.value = _uiState.value.copy(
             isStorageConfigured = true,
             showStorageConfigDialog = false,
-            storageBaseDirectoryDisplay = storagePreferences.getEffectiveBaseDirectory().absolutePath,
-            statusMessage = "Storage configured: ${storagePreferences.storageFolderName}"
+            storageBaseDirectoryDisplay = baseDir.absolutePath,
+            friendlyStoragePath = friendly,
+            statusMessage = "Storage saved to: $friendly"
         )
     }
 

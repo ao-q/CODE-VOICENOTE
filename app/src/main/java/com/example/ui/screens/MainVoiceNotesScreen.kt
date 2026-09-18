@@ -169,8 +169,8 @@ fun MainVoiceNotesScreen(
             currentFolderName = uiState.storageBaseDirectoryDisplay.substringAfterLast("/", "VoiceNotes"),
             currentBasePath = uiState.storageBaseDirectoryDisplay,
             isFirstLaunch = !uiState.isStorageConfigured,
-            onConfirm = { folderName, path ->
-                viewModel.configureStorage(folderName, path)
+            onConfirm = { folderName, path, treeUri ->
+                viewModel.configureStorage(folderName, path, treeUri)
             },
             onDismiss = {
                 viewModel.dismissStorageConfigDialog()
@@ -436,6 +436,44 @@ fun MainVoiceNotesScreen(
                     .padding(horizontal = 16.dp, vertical = 6.dp)
                     .testTag("search_voice_notes_input")
             )
+
+            // Device Storage Location Banner
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 2.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { viewModel.openStorageConfigDialog() }
+                    .testTag("storage_location_banner"),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Folder,
+                        contentDescription = "Device Storage",
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (uiState.friendlyStoragePath.isNotBlank()) uiState.friendlyStoragePath else "Internal Storage > Documents > VoiceNotes",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Change",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
 
             // Content List (Folders + Notes)
             LazyColumn(
