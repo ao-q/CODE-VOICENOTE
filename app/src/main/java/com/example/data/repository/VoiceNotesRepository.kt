@@ -2,7 +2,6 @@ package com.example.data.repository
 
 import com.example.data.db.VoiceNotesDao
 import com.example.data.model.FolderEntity
-import com.example.data.model.SyncKeyPayload
 import com.example.data.model.SyncTimestampItem
 import com.example.data.model.TimestampMarkerEntity
 import com.example.data.model.VoiceNoteEntity
@@ -59,6 +58,50 @@ class VoiceNotesRepository(
     fun searchVoiceNotes(query: String): Flow<List<VoiceNoteEntity>> =
         dao.searchVoiceNotes(query)
 
+    fun getPinnedVoiceNotes(): Flow<List<VoiceNoteEntity>> =
+        dao.getPinnedVoiceNotes()
+
+    suspend fun togglePinNote(noteId: Long, isPinned: Boolean) = withContext(Dispatchers.IO) {
+        dao.updatePinned(noteId, isPinned)
+    }
+
+    /**
+     * Creates a written markdown note directly (without audio).
+     */
+    suspend fun createWrittenNote(
+        folderId: Long?,
+        title: String,
+        content: String
+    ): Long = withContext(Dispatchers.IO) {
+        val hierarchy = getFolderHierarchyNames(folderId)
+        val createdAt = System.currentTimeMillis()
+        val locations = storageManager.prepareRecordingLocations(hierarchy, title, createdAt)
+
+        storageManager.writeNotesFile(
+            notesFile = locations.notesFile,
+            title = locations.resolvedTitle,
+            content = content,
+            createdAt = createdAt,
+            durationMs = 0L,
+            timestamps = emptyList()
+        )
+
+        val entity = VoiceNoteEntity(
+            folderId = folderId,
+            title = locations.resolvedTitle,
+            audioFileName = "",
+            audioFilePath = "",
+            noteFileName = locations.notesFile.name,
+            noteFilePath = locations.notesFile.absolutePath,
+            noteContent = content,
+            noteFolderDirectory = locations.folderDirectory.absolutePath,
+            durationMs = 0L,
+            createdAt = createdAt,
+            isPinned = false
+        )
+        dao.insertVoiceNote(entity)
+    }
+
     suspend fun getVoiceNoteById(id: Long): VoiceNoteEntity? = withContext(Dispatchers.IO) {
         dao.getVoiceNoteById(id)
     }
@@ -73,7 +116,7 @@ class VoiceNotesRepository(
     }
 
     /**
-     * Saves a recorded voice note into Room database and writes note txt and sync_keys.json to disk.
+     * Saves a recorded voice note into Room database and writes note md to disk.
      */
     suspend fun saveCompletedVoiceNote(
         folderId: Long?,
@@ -96,18 +139,6 @@ class VoiceNotesRepository(
             timestamps = timestampMarkers
         )
 
-        // Write the sync keys file
-        val syncKeyPayload = SyncKeyPayload(
-            title = title,
-            audioFileName = audioFile.name,
-            durationMs = durationMs,
-            createdAt = createdAt,
-            noteContent = noteContent,
-            timestamps = timestampMarkers
-        )
-        val syncKeyFile = File(folderDir, "sync_keys.json")
-        storageManager.writeSyncKeysFile(syncKeyFile, syncKeyPayload)
-
         val entity = VoiceNoteEntity(
             folderId = folderId,
             title = title,
@@ -118,8 +149,7 @@ class VoiceNotesRepository(
             noteContent = noteContent,
             noteFolderDirectory = folderDir.absolutePath,
             durationMs = durationMs,
-            createdAt = createdAt,
-            syncKey = syncKeyPayload.toJsonString()
+            createdAt = createdAt
         )
 
         val noteId = dao.insertVoiceNote(entity)
@@ -143,7 +173,7 @@ class VoiceNotesRepository(
 
     /**
      * Renames a voice note and automatically syncs to local storage:
-     * Renames the titled folder, .mp3 file, .txt file, and updates sync_keys.json.
+     * Renames the titled folder, .mp3 file, and .md file.
      */
     suspend fun renameVoiceNote(noteId: Long, newTitle: String): VoiceNoteEntity? = withContext(Dispatchers.IO) {
         val note = dao.getVoiceNoteById(noteId) ?: return@withContext null
@@ -170,15 +200,7 @@ class VoiceNotesRepository(
             audioFilePath = renamed.newAudioFile.absolutePath,
             noteFileName = renamed.newNotesFile.name,
             noteFilePath = renamed.newNotesFile.absolutePath,
-            noteFolderDirectory = renamed.newFolderDirectory.absolutePath,
-            syncKey = SyncKeyPayload(
-                title = renamed.newTitle,
-                audioFileName = renamed.newAudioFile.name,
-                durationMs = note.durationMs,
-                createdAt = note.createdAt,
-                noteContent = note.noteContent,
-                timestamps = markers
-            ).toJsonString()
+            noteFolderDirectory = renamed.newFolderDirectory.absolutePath
         )
 
         dao.updateVoiceNote(updatedNote)
@@ -186,7 +208,7 @@ class VoiceNotesRepository(
     }
 
     /**
-     * Updates note text content for a voice note, synchronizing the .txt file on disk.
+     * Updates note text content for a voice note, synchronizing the .md file on disk.
      */
     suspend fun updateNoteContent(noteId: Long, newContent: String) = withContext(Dispatchers.IO) {
         val note = dao.getVoiceNoteById(noteId) ?: return@withContext
@@ -194,7 +216,7 @@ class VoiceNotesRepository(
             SyncTimestampItem(timeMs = it.timeMs, formattedTime = it.formattedTime, label = it.label)
         }
 
-        // Re-write notes txt file
+        // Re-write notes md file
         val notesFile = File(note.noteFilePath)
         storageManager.writeNotesFile(
             notesFile = notesFile,
@@ -205,20 +227,8 @@ class VoiceNotesRepository(
             timestamps = markers
         )
 
-        val payload = SyncKeyPayload(
-            title = note.title,
-            audioFileName = note.audioFileName,
-            durationMs = note.durationMs,
-            createdAt = note.createdAt,
-            noteContent = newContent,
-            timestamps = markers
-        )
-        val syncKeyFile = File(note.noteFolderDirectory, "sync_keys.json")
-        storageManager.writeSyncKeysFile(syncKeyFile, payload)
-
         val updated = note.copy(
-            noteContent = newContent,
-            syncKey = payload.toJsonString()
+            noteContent = newContent
         )
         dao.updateVoiceNote(updated)
     }
@@ -256,7 +266,7 @@ class VoiceNotesRepository(
     }
 
     /**
-     * Adds a timestamp marker and syncs to disk sync_keys.json and notes file.
+     * Adds a timestamp marker and syncs to disk notes file.
      */
     suspend fun addTimestampMarker(noteId: Long, timeMs: Long, formattedTime: String, label: String) = withContext(Dispatchers.IO) {
         val marker = TimestampMarkerEntity(
@@ -272,18 +282,7 @@ class VoiceNotesRepository(
             SyncTimestampItem(timeMs = it.timeMs, formattedTime = it.formattedTime, label = it.label)
         }
 
-        val payload = SyncKeyPayload(
-            title = note.title,
-            audioFileName = note.audioFileName,
-            durationMs = note.durationMs,
-            createdAt = note.createdAt,
-            noteContent = note.noteContent,
-            timestamps = allMarkers
-        )
-        val syncKeyFile = File(note.noteFolderDirectory, "sync_keys.json")
-        storageManager.writeSyncKeysFile(syncKeyFile, payload)
-
-        // Also update the note txt file with the new timestamp list
+        // Also update the note file with the new timestamp list
         storageManager.writeNotesFile(
             notesFile = File(note.noteFilePath),
             title = note.title,
@@ -292,106 +291,5 @@ class VoiceNotesRepository(
             durationMs = note.durationMs,
             timestamps = allMarkers
         )
-
-        dao.updateVoiceNote(note.copy(syncKey = payload.toJsonString()))
-    }
-
-    /**
-     * Sync Keys action: Force re-synchronizes the note's files on local storage
-     * and generates the portable sync format.
-     */
-    suspend fun syncKeysForNote(noteId: Long): SyncKeyPayload? = withContext(Dispatchers.IO) {
-        val note = dao.getVoiceNoteById(noteId) ?: return@withContext null
-        val markers = dao.getMarkersListForNote(noteId).map {
-            SyncTimestampItem(timeMs = it.timeMs, formattedTime = it.formattedTime, label = it.label)
-        }
-
-        val payload = SyncKeyPayload(
-            title = note.title,
-            audioFileName = note.audioFileName,
-            durationMs = note.durationMs,
-            createdAt = note.createdAt,
-            noteContent = note.noteContent,
-            timestamps = markers
-        )
-
-        val folderDir = File(note.noteFolderDirectory)
-        if (!folderDir.exists()) {
-            folderDir.mkdirs()
-        }
-        val syncKeyFile = File(folderDir, "sync_keys.json")
-        storageManager.writeSyncKeysFile(syncKeyFile, payload)
-
-        // Also ensure notes file exists
-        val notesFile = File(note.noteFilePath)
-        storageManager.writeNotesFile(
-            notesFile = notesFile,
-            title = note.title,
-            content = note.noteContent,
-            createdAt = note.createdAt,
-            durationMs = note.durationMs,
-            timestamps = markers
-        )
-
-        dao.updateVoiceNote(note.copy(syncKey = payload.toJsonString()))
-        payload
-    }
-
-    /**
-     * Imports a Sync Key JSON format into the app's memory & local storage.
-     */
-    suspend fun importSyncKey(payload: SyncKeyPayload, targetFolderId: Long?): Long = withContext(Dispatchers.IO) {
-        val targetHierarchy = getFolderHierarchyNames(targetFolderId)
-        val prep = storageManager.prepareRecordingLocations(
-            parentFolderHierarchy = targetHierarchy,
-            userTitle = payload.title,
-            timestamp = payload.createdAt
-        )
-
-        // If audio file doesn't exist yet, we ensure the file path is ready
-        // Write the notes file
-        storageManager.writeNotesFile(
-            notesFile = prep.notesFile,
-            title = payload.title,
-            content = payload.noteContent,
-            createdAt = payload.createdAt,
-            durationMs = payload.durationMs,
-            timestamps = payload.timestamps
-        )
-
-        // Write the sync keys file
-        storageManager.writeSyncKeysFile(prep.syncKeyFile, payload)
-
-        val entity = VoiceNoteEntity(
-            folderId = targetFolderId,
-            title = payload.title,
-            audioFileName = prep.audioFile.name,
-            audioFilePath = prep.audioFile.absolutePath,
-            noteFileName = prep.notesFile.name,
-            noteFilePath = prep.notesFile.absolutePath,
-            noteContent = payload.noteContent,
-            noteFolderDirectory = prep.folderDirectory.absolutePath,
-            durationMs = payload.durationMs,
-            createdAt = payload.createdAt,
-            syncKey = payload.toJsonString()
-        )
-
-        val newId = dao.insertVoiceNote(entity)
-
-        // Insert imported timestamp markers
-        val markerEntities = payload.timestamps.map {
-            TimestampMarkerEntity(
-                voiceNoteId = newId,
-                timeMs = it.timeMs,
-                formattedTime = it.formattedTime,
-                label = it.label,
-                createdAt = payload.createdAt
-            )
-        }
-        if (markerEntities.isNotEmpty()) {
-            dao.insertMarkers(markerEntities)
-        }
-
-        newId
     }
 }

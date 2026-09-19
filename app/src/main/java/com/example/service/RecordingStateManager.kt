@@ -35,6 +35,13 @@ object RecordingStateManager {
         val mins = totalSec / 60
         val secs = totalSec % 60
         val formatted = String.format("%02d:%02d", mins, secs)
+
+        // Check if timestamp for this exact formatted second already exists to avoid duplicate chips
+        val existing = current.flaggedTimestamps.find { it.formattedTime == formatted }
+        if (existing != null) {
+            return existing
+        }
+
         val markerIndex = current.flaggedTimestamps.size + 1
         val safeLabel = if (!label.isNullOrBlank()) label else "Flag #$markerIndex"
         val item = SyncTimestampItem(

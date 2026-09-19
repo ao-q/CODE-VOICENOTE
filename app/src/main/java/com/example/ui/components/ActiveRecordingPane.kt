@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import android.app.Activity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -8,6 +9,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -31,13 +34,21 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.FiberManualRecord
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MoreTime
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
+import com.example.service.FloatingRecordingOverlayManager
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -199,6 +210,8 @@ private fun RecordingStudioSection(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+
     Card(
         modifier = modifier,
         shape = RoundedCornerShape(24.dp),
@@ -244,17 +257,38 @@ private fun RecordingStudioSection(
                     )
                 }
 
-                IconButton(
-                    onClick = onCancel,
-                    modifier = Modifier
-                        .size(36.dp)
-                        .testTag("cancel_recording_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Cancel Recording",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = {
+                            if (FloatingRecordingOverlayManager.canDrawOverlays(context)) {
+                                (context as? Activity)?.moveTaskToBack(true)
+                            } else {
+                                FloatingRecordingOverlayManager.requestOverlayPermission(context)
+                            }
+                        },
+                        modifier = Modifier
+                            .size(36.dp)
+                            .testTag("floating_window_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Layers,
+                            contentDescription = "Floating Window",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    IconButton(
+                        onClick = onCancel,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .testTag("cancel_recording_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Cancel Recording",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 
@@ -339,24 +373,29 @@ private fun RecordingStudioSection(
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Pause / Resume Button
+                // Pause / Resume Button (Large, prominent Stock Android design)
                 FilledTonalButton(
                     onClick = {
                         if (sessionState.isPaused) onResume() else onPause()
                     },
                     shape = CircleShape,
+                    contentPadding = PaddingValues(0.dp),
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = if (sessionState.isPaused) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = if (sessionState.isPaused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                    ),
                     modifier = Modifier
-                        .size(54.dp)
+                        .size(72.dp)
                         .testTag("pause_resume_button")
                 ) {
                     Icon(
                         imageVector = if (sessionState.isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                        contentDescription = if (sessionState.isPaused) "Resume" else "Pause",
-                        modifier = Modifier.size(26.dp)
+                        contentDescription = if (sessionState.isPaused) "Resume Recording" else "Pause Recording",
+                        modifier = Modifier.size(38.dp)
                     )
                 }
 
-                Spacer(modifier = Modifier.width(28.dp))
+                Spacer(modifier = Modifier.width(32.dp))
 
                 // Stop & Save Button (Large Prominent Recorder Button)
                 FloatingActionButton(
@@ -365,14 +404,72 @@ private fun RecordingStudioSection(
                     contentColor = Color.White,
                     shape = CircleShape,
                     modifier = Modifier
-                        .size(68.dp)
+                        .size(72.dp)
                         .testTag("stop_and_save_button")
                 ) {
                     Icon(
                         imageVector = Icons.Default.Stop,
                         contentDescription = "Stop and Save Note",
-                        modifier = Modifier.size(36.dp)
+                        modifier = Modifier.size(38.dp)
                     )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Floating Window Status / Permission Pill
+            val hasOverlayPermission = FloatingRecordingOverlayManager.canDrawOverlays(context)
+            if (hasOverlayPermission) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+                    modifier = Modifier.clickable {
+                        (context as? Activity)?.moveTaskToBack(true)
+                    }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Layers,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            "Floating controls active on exit",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            } else {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
+                    modifier = Modifier.clickable {
+                        FloatingRecordingOverlayManager.requestOverlayPermission(context)
+                    }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Layers,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            "Enable floating controls on exit",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
                 }
             }
         }
@@ -389,6 +486,17 @@ private fun WriteNotesSection(
     onFlagTimestamp: (String?) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var showTimestampsDialog by remember { mutableStateOf(false) }
+    var isPreviewMode by remember { mutableStateOf(false) }
+    var notesFieldValue by remember(notes) {
+        mutableStateOf(
+            TextFieldValue(
+                text = notes,
+                selection = TextRange(notes.length)
+            )
+        )
+    }
+
     Card(
         modifier = modifier,
         shape = RoundedCornerShape(24.dp),
@@ -402,7 +510,7 @@ private fun WriteNotesSection(
                 .padding(16.dp)
                 .fillMaxSize()
         ) {
-            // Section Header: "Write Notes"
+            // Section Header: "Notes (.md)", Mode Switcher, and Timestamps Icon
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -411,72 +519,217 @@ private fun WriteNotesSection(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         Icons.Default.EditNote,
-                        contentDescription = "Write Notes",
+                        contentDescription = "Notes",
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(24.dp)
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Write Notes",
+                        text = "Notes",
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 }
 
-                // Quick insert timestamp tag button
-                AssistChip(
-                    onClick = {
-                        val currentTs = sessionState.elapsedFormatted
-                        val insertion = "\n[Flag: $currentTs] "
-                        onNotesChange(notes + insertion)
-                        onFlagTimestamp("Note flag at $currentTs")
-                    },
-                    label = { Text("+ Timestamp", fontSize = 11.sp) },
-                    leadingIcon = {
-                        Icon(Icons.Default.Schedule, contentDescription = null, modifier = Modifier.size(14.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Edit / Preview Pill Toggle
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                        modifier = Modifier.padding(end = 4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (!isPreviewMode) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                                modifier = Modifier
+                                    .clickable { isPreviewMode = false }
+                                    .testTag("notes_edit_tab")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.Edit,
+                                        contentDescription = "Edit",
+                                        modifier = Modifier.size(13.dp),
+                                        tint = if (!isPreviewMode) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text(
+                                        text = "Edit",
+                                        fontSize = 11.sp,
+                                        fontWeight = if (!isPreviewMode) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (!isPreviewMode) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (isPreviewMode) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
+                                modifier = Modifier
+                                    .clickable { isPreviewMode = true }
+                                    .testTag("notes_preview_tab")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.Visibility,
+                                        contentDescription = "Preview",
+                                        modifier = Modifier.size(13.dp),
+                                        tint = if (isPreviewMode) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                    Text(
+                                        text = "Preview",
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isPreviewMode) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isPreviewMode) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
                     }
-                )
+
+                    // "Clock and Plus" icon button: shows all timestamps to insert in one click
+                    IconButton(
+                        onClick = { showTimestampsDialog = true },
+                        modifier = Modifier
+                            .size(36.dp)
+                            .testTag("recording_clock_and_plus_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.MoreTime,
+                            contentDescription = "Insert Timestamps",
+                            tint = TimestampFlagColor,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-            // Note Title Input
-            OutlinedTextField(
-                value = title,
-                onValueChange = onTitleChange,
-                label = { Text("Title of your notes") },
-                placeholder = { Text("e.g., Team Sync (defaults to recording time)") },
-                singleLine = true,
-                shape = RoundedCornerShape(14.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("note_title_input")
-            )
+            if (!isPreviewMode) {
+                // EDIT MODE
+                // Note Title Input
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = onTitleChange,
+                    label = { Text("Title of your notes") },
+                    placeholder = { Text("e.g., Team Sync (defaults to recording time)") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("note_title_input")
+                )
 
-            Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
-            // Regular Notes App Text Area
-            OutlinedTextField(
-                value = notes,
-                onValueChange = onNotesChange,
-                label = { Text("Take notes here while recording...") },
-                placeholder = { Text("Type summary, meeting agenda, decisions, or key remarks...") },
-                singleLine = false,
-                shape = RoundedCornerShape(14.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .testTag("note_content_input")
-            )
+                // Advanced Formatting Toolbar (B, I, S, H1, H2, Bullet, Checkbox, Quote, Code, Timestamp Icon)
+                MarkdownEditorToolbar(
+                    value = notesFieldValue,
+                    onValueChange = { newValue ->
+                        notesFieldValue = newValue
+                        onNotesChange(newValue.text)
+                    },
+                    currentTimestampFormatted = sessionState.elapsedFormatted,
+                    onInsertTimestamp = {
+                        val currentTs = sessionState.elapsedFormatted
+                        val tag = "\n- **[$currentTs]** "
+                        val updated = insertTextAtCursor(notesFieldValue, tag)
+                        notesFieldValue = updated
+                        onNotesChange(updated.text)
+                        onFlagTimestamp("Flag at $currentTs")
+                    },
+                    modifier = Modifier.padding(bottom = 6.dp)
+                )
+
+                // Notes Text Area
+                OutlinedTextField(
+                    value = notesFieldValue,
+                    onValueChange = { newValue ->
+                        notesFieldValue = newValue
+                        onNotesChange(newValue.text)
+                    },
+                    placeholder = { Text("Write notes in Markdown, format with toolbar above, or tap clock icon to insert timestamps...") },
+                    singleLine = false,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .testTag("note_content_input")
+                )
+            } else {
+                // PREVIEW MODE
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                ) {
+                    if (title.isNotBlank()) {
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    ) {
+                        MarkdownPreview(
+                            markdown = notes,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                }
+            }
         }
+    }
+
+    if (showTimestampsDialog) {
+        TimestampsSelectionDialog(
+            timestamps = sessionState.flaggedTimestamps,
+            onInsertAll = {
+                val mdBlock = buildString {
+                    append("\n\n### Timestamps\n")
+                    sessionState.flaggedTimestamps.forEach { ts ->
+                        append("- **[${ts.formattedTime}]** ${ts.label}\n")
+                    }
+                }
+                onNotesChange(notes + mdBlock)
+            },
+            onInsertSingle = { item ->
+                onNotesChange(notes + "\n- **[${item.formattedTime}]** ${item.label}")
+            },
+            onFlagCurrentTime = {
+                val currentTs = sessionState.elapsedFormatted
+                onFlagTimestamp("Flag at $currentTs")
+            },
+            onDismiss = { showTimestampsDialog = false }
+        )
     }
 }
 

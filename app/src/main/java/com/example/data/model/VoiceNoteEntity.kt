@@ -30,5 +30,6 @@ data class VoiceNoteEntity(
     val noteFolderDirectory: String,
     val durationMs: Long = 0L,
     val createdAt: Long = System.currentTimeMillis(),
-    val syncKey: String = ""
+    val syncKey: String = "",
+    val isPinned: Boolean = false
 )

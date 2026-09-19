@@ -2,7 +2,6 @@ package com.example.data.storage
 
 import android.content.Context
 import android.media.MediaScannerConnection
-import com.example.data.model.SyncKeyPayload
 import com.example.data.model.SyncTimestampItem
 import java.io.File
 import java.text.SimpleDateFormat
@@ -13,7 +12,6 @@ data class RecordingFileLocations(
     val folderDirectory: File,
     val audioFile: File,
     val notesFile: File,
-    val syncKeyFile: File,
     val resolvedTitle: String,
     val isAutoNamed: Boolean
 )
@@ -22,7 +20,6 @@ data class RenamedFileLocations(
     val newFolderDirectory: File,
     val newAudioFile: File,
     val newNotesFile: File,
-    val newSyncKeyFile: File,
     val newTitle: String
 )
 
@@ -99,21 +96,19 @@ class StorageManager(private val context: Context) {
         }
 
         val audioFile = File(targetFolder, "$baseFileName.mp3")
-        val notesFile = File(targetFolder, "$baseFileName.txt")
-        val syncKeyFile = File(targetFolder, "sync_keys.json")
+        val notesFile = File(targetFolder, "$baseFileName.md")
 
         return RecordingFileLocations(
             folderDirectory = targetFolder,
             audioFile = audioFile,
             notesFile = notesFile,
-            syncKeyFile = syncKeyFile,
             resolvedTitle = resolvedTitle,
             isAutoNamed = isAutoNamed
         )
     }
 
     /**
-     * Writes written notes to the titled .txt file.
+     * Writes written notes to the titled .md (Markdown) file.
      */
     fun writeNotesFile(
         notesFile: File,
@@ -125,18 +120,19 @@ class StorageManager(private val context: Context) {
     ) {
         try {
             val builder = StringBuilder()
-            builder.append("=========================================\n")
-            builder.append("VOICE NOTE: ").append(title).append("\n")
-            builder.append("Recorded on: ").append(formatReadableDate(createdAt)).append("\n")
-            builder.append(String.format(Locale.getDefault(), "Duration: %02d:%02d\n", (durationMs / 1000) / 60, (durationMs / 1000) % 60))
-            builder.append("=========================================\n\n")
-            builder.append("--- WRITTEN NOTES ---\n")
-            builder.append(if (content.isBlank()) "(No additional notes taken)" else content).append("\n\n")
+            builder.append("# ").append(title).append("\n\n")
+            builder.append("- **Recorded on:** ").append(formatReadableDate(createdAt)).append("\n")
+            val mins = (durationMs / 1000) / 60
+            val secs = (durationMs / 1000) % 60
+            builder.append(String.format(Locale.getDefault(), "- **Duration:** %02d:%02d\n\n", mins, secs))
+
+            builder.append("## Notes\n\n")
+            builder.append(if (content.isBlank()) "*(No additional notes taken)*" else content).append("\n\n")
 
             if (timestamps.isNotEmpty()) {
-                builder.append("--- FLAGGED TIMESTAMPS ---\n")
+                builder.append("## Timestamps\n\n")
                 for (ts in timestamps) {
-                    builder.append("[${ts.formattedTime}] ${ts.label}\n")
+                    builder.append("- **[${ts.formattedTime}]** ${ts.label}\n")
                 }
                 builder.append("\n")
             }
@@ -148,19 +144,7 @@ class StorageManager(private val context: Context) {
     }
 
     /**
-     * Writes the Sync Keys metadata JSON file into the note's folder.
-     */
-    fun writeSyncKeysFile(syncKeyFile: File, payload: SyncKeyPayload) {
-        try {
-            syncKeyFile.writeText(payload.toJsonString(), Charsets.UTF_8)
-            notifyMediaScanner(syncKeyFile)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
-    /**
-     * Automatically renames the voice note folder, .mp3, .txt, and sync_keys.json
+     * Automatically renames the voice note folder, .mp3, and .md
      * on the local storage device to stay perfectly in sync.
      */
     fun renameVoiceNote(
@@ -190,8 +174,7 @@ class StorageManager(private val context: Context) {
 
         // Now inside the folder (whether renamed or not), rename the files
         val newAudioFile = File(newFolderDir, "$safeNewTitle.mp3")
-        val newNotesFile = File(newFolderDir, "$safeNewTitle.txt")
-        val syncKeyFile = File(newFolderDir, "sync_keys.json")
+        val newNotesFile = File(newFolderDir, "$safeNewTitle.md")
 
         // If audio file name needs changing:
         val activeAudioFile = if (currentAudioFile.parentFile?.absolutePath != newFolderDir.absolutePath) {
@@ -209,7 +192,7 @@ class StorageManager(private val context: Context) {
             activeAudioFile
         }
 
-        // Delete old txt file if differently named
+        // Delete old txt or md file if differently named
         val activeNotesFile = if (currentNotesFile.parentFile?.absolutePath != newFolderDir.absolutePath) {
             File(newFolderDir, currentNotesFile.name)
         } else {
@@ -218,27 +201,23 @@ class StorageManager(private val context: Context) {
         if (activeNotesFile.exists() && activeNotesFile.absolutePath != newNotesFile.absolutePath) {
             activeNotesFile.delete()
         }
+        val legacyTxtFile = File(newFolderDir, "$safeNewTitle.txt")
+        if (legacyTxtFile.exists()) {
+            legacyTxtFile.delete()
+        }
+        val oldSyncKeyFile = File(newFolderDir, "sync_keys.json")
+        if (oldSyncKeyFile.exists()) {
+            oldSyncKeyFile.delete()
+        }
 
         // Re-write notes file with updated title
         writeNotesFile(newNotesFile, newTitle, noteContent, createdAt, durationMs, timestamps)
-
-        // Re-write sync_keys.json
-        val payload = SyncKeyPayload(
-            title = newTitle,
-            audioFileName = finalAudioFile.name,
-            durationMs = durationMs,
-            createdAt = createdAt,
-            noteContent = noteContent,
-            timestamps = timestamps
-        )
-        writeSyncKeysFile(syncKeyFile, payload)
-        notifyMediaScanner(finalAudioFile, newNotesFile, syncKeyFile)
+        notifyMediaScanner(finalAudioFile, newNotesFile)
 
         return RenamedFileLocations(
             newFolderDirectory = newFolderDir,
             newAudioFile = finalAudioFile,
             newNotesFile = newNotesFile,
-            newSyncKeyFile = syncKeyFile,
             newTitle = newTitle
         )
     }

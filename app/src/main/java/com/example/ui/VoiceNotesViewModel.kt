@@ -5,7 +5,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.db.AppDatabase
 import com.example.data.model.FolderEntity
-import com.example.data.model.SyncKeyPayload
 import com.example.data.model.SyncTimestampItem
 import com.example.data.model.TimestampMarkerEntity
 import com.example.data.model.VoiceNoteEntity
@@ -25,11 +24,23 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
 
+enum class MainTab {
+    HOME,
+    PINS,
+    WRITE
+}
+
 data class VoiceNotesUiState(
+    val selectedTab: MainTab = MainTab.HOME,
+    val showWriteNoteDialog: Boolean = false,
+    val isFullScreenEditorOpen: Boolean = false,
+    val fullScreenEditorNote: VoiceNoteEntity? = null,
+    val isNewNoteMode: Boolean = false,
     val isStorageConfigured: Boolean = false,
     val showStorageConfigDialog: Boolean = false,
     val storageBaseDirectoryDisplay: String = "",
@@ -45,9 +56,6 @@ data class VoiceNotesUiState(
     val folderToRename: FolderEntity? = null,
     val showMoveNoteDialog: Boolean = false,
     val noteToMove: VoiceNoteEntity? = null,
-    val showSyncKeysDialog: Boolean = false,
-    val activeSyncKeyPayload: SyncKeyPayload? = null,
-    val syncKeyNoteId: Long? = null,
     val showDeleteConfirmDialog: Boolean = false,
     val noteToDelete: VoiceNoteEntity? = null,
     val folderToDelete: FolderEntity? = null,
@@ -84,6 +92,9 @@ class VoiceNotesViewModel(application: Application) : AndroidViewModel(applicati
     private val _currentFolderId = MutableStateFlow<Long?>(null)
     val currentFolderId: StateFlow<Long?> = _currentFolderId.asStateFlow()
 
+    // Current selected tab flow
+    private val _selectedTab = MutableStateFlow(MainTab.HOME)
+
     // Search query flow
     private val _searchQuery = MutableStateFlow("")
 
@@ -96,17 +107,37 @@ class VoiceNotesViewModel(application: Application) : AndroidViewModel(applicati
     val allFolders: StateFlow<List<FolderEntity>> = repository.getAllFolders()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // Voice notes in current folder (or searched)
+    // All notes across all folders (for Write Notes section access)
+    val allNotes: StateFlow<List<VoiceNoteEntity>> = repository.getAllVoiceNotes()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // All pinned notes across all folders (for Pins badge and list)
+    val pinnedNotes: StateFlow<List<VoiceNoteEntity>> = repository.getPinnedVoiceNotes()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Voice notes in current folder, or search, or pinned notes based on tab
     val currentVoiceNotes: StateFlow<List<VoiceNoteEntity>> = combine(
         _currentFolderId,
-        _searchQuery
-    ) { folderId, query ->
-        Pair(folderId, query)
-    }.flatMapLatest { (folderId, query) ->
-        if (query.isNotBlank()) {
-            repository.searchVoiceNotes(query)
-        } else {
-            repository.getVoiceNotesByFolder(folderId)
+        _searchQuery,
+        _selectedTab
+    ) { folderId, query, tab ->
+        Triple(folderId, query, tab)
+    }.flatMapLatest { (folderId, query, tab) ->
+        when {
+            tab == MainTab.PINS -> {
+                if (query.isNotBlank()) {
+                    repository.getPinnedVoiceNotes().map { list ->
+                        list.filter { note ->
+                            note.title.contains(query, ignoreCase = true) ||
+                            note.noteContent.contains(query, ignoreCase = true)
+                        }
+                    }
+                } else {
+                    repository.getPinnedVoiceNotes()
+                }
+            }
+            query.isNotBlank() -> repository.searchVoiceNotes(query)
+            else -> repository.getVoiceNotesByFolder(folderId)
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
@@ -163,6 +194,127 @@ class VoiceNotesViewModel(application: Application) : AndroidViewModel(applicati
         // Only allow dismissing if already configured
         if (storagePreferences.isStorageConfigured) {
             _uiState.value = _uiState.value.copy(showStorageConfigDialog = false)
+        }
+    }
+
+    // Tab Navigation
+    fun selectTab(tab: MainTab) {
+        _selectedTab.value = tab
+        _uiState.value = _uiState.value.copy(selectedTab = tab)
+    }
+
+    // Full Screen Markdown Editor Operations
+    fun openFullScreenEditorForNew() {
+        _uiState.value = _uiState.value.copy(
+            isFullScreenEditorOpen = true,
+            fullScreenEditorNote = null,
+            isNewNoteMode = true
+        )
+    }
+
+    fun openFullScreenEditorForNote(note: VoiceNoteEntity) {
+        _uiState.value = _uiState.value.copy(
+            isFullScreenEditorOpen = true,
+            fullScreenEditorNote = note,
+            isNewNoteMode = false
+        )
+    }
+
+    fun closeFullScreenEditor() {
+        _uiState.value = _uiState.value.copy(
+            isFullScreenEditorOpen = false,
+            fullScreenEditorNote = null,
+            isNewNoteMode = false
+        )
+    }
+
+    fun saveFullScreenNote(
+        noteId: Long?,
+        title: String,
+        content: String,
+        isPinned: Boolean
+    ) {
+        val safeTitle = title.trim().ifBlank { "Untitled Note" }
+        viewModelScope.launch {
+            if (noteId == null || _uiState.value.isNewNoteMode) {
+                // Create new written note
+                val newId = repository.createWrittenNote(
+                    folderId = _currentFolderId.value,
+                    title = safeTitle,
+                    content = content
+                )
+                if (isPinned) {
+                    repository.togglePinNote(newId, true)
+                }
+                val created = repository.getVoiceNoteById(newId)
+                _uiState.value = _uiState.value.copy(
+                    fullScreenEditorNote = created,
+                    isNewNoteMode = false,
+                    statusMessage = "Note '$safeTitle' saved (.md)"
+                )
+            } else {
+                // Update existing note
+                val currentNote = repository.getVoiceNoteById(noteId)
+                if (currentNote != null) {
+                    if (currentNote.title != safeTitle) {
+                        repository.renameVoiceNote(noteId, safeTitle)
+                    }
+                    repository.updateNoteContent(noteId, content)
+                    if (currentNote.isPinned != isPinned) {
+                        repository.togglePinNote(noteId, isPinned)
+                    }
+                    val updated = repository.getVoiceNoteById(noteId)
+                    _uiState.value = _uiState.value.copy(
+                        fullScreenEditorNote = updated,
+                        statusMessage = "Synced to ${updated?.noteFileName ?: "storage"}"
+                    )
+                }
+            }
+        }
+    }
+
+    fun deleteCurrentFullScreenNote() {
+        val note = _uiState.value.fullScreenEditorNote ?: return
+        viewModelScope.launch {
+            if (audioPlayerManager.state.value.currentNoteId == note.id) {
+                audioPlayerManager.stop()
+            }
+            repository.deleteVoiceNote(note.id)
+            closeFullScreenEditor()
+            _uiState.value = _uiState.value.copy(statusMessage = "Note '${note.title}' deleted")
+        }
+    }
+
+    fun openWriteNoteDialog() {
+        openFullScreenEditorForNew()
+    }
+
+    fun dismissWriteNoteDialog() {
+        _uiState.value = _uiState.value.copy(showWriteNoteDialog = false)
+    }
+
+    fun createWrittenNote(title: String, content: String) {
+        val safeTitle = title.trim().ifBlank { "Written Note" }
+        viewModelScope.launch {
+            repository.createWrittenNote(
+                folderId = _currentFolderId.value,
+                title = safeTitle,
+                content = content
+            )
+            _uiState.value = _uiState.value.copy(
+                showWriteNoteDialog = false,
+                statusMessage = "Note '$safeTitle' saved to storage"
+            )
+        }
+    }
+
+    fun togglePinNote(note: VoiceNoteEntity) {
+        viewModelScope.launch {
+            val nextPinned = !note.isPinned
+            repository.togglePinNote(note.id, nextPinned)
+            _uiState.value = _uiState.value.copy(
+                statusMessage = if (nextPinned) "Pinned '${note.title}'" else "Unpinned '${note.title}'"
+            )
         }
     }
 
@@ -415,46 +567,6 @@ class VoiceNotesViewModel(application: Application) : AndroidViewModel(applicati
             }
             dismissDeleteDialog()
             _uiState.value = _uiState.value.copy(statusMessage = "Note '${note.title}' deleted from storage")
-        }
-    }
-
-    // ==========================================
-    // Sync Keys (3-Dots menu option)
-    // ==========================================
-    fun openSyncKeysForNote(note: VoiceNoteEntity) {
-        viewModelScope.launch {
-            val payload = repository.syncKeysForNote(note.id)
-            _uiState.value = _uiState.value.copy(
-                showSyncKeysDialog = true,
-                activeSyncKeyPayload = payload,
-                syncKeyNoteId = note.id
-            )
-        }
-    }
-
-    fun openSyncKeysGeneral() {
-        _uiState.value = _uiState.value.copy(
-            showSyncKeysDialog = true,
-            activeSyncKeyPayload = null,
-            syncKeyNoteId = null
-        )
-    }
-
-    fun dismissSyncKeysDialog() {
-        _uiState.value = _uiState.value.copy(showSyncKeysDialog = false, activeSyncKeyPayload = null)
-    }
-
-    fun importSyncKeyString(rawJson: String) {
-        if (rawJson.isBlank()) return
-        val payload = SyncKeyPayload.fromJsonString(rawJson.trim())
-        if (payload == null) {
-            _uiState.value = _uiState.value.copy(statusMessage = "Invalid Sync Key format")
-            return
-        }
-        viewModelScope.launch {
-            repository.importSyncKey(payload, _currentFolderId.value)
-            dismissSyncKeysDialog()
-            _uiState.value = _uiState.value.copy(statusMessage = "Imported '${payload.title}' into memory & storage")
         }
     }
 

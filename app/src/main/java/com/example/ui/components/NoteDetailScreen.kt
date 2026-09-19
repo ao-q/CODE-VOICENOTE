@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,16 +24,26 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.DriveFileRenameOutline
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.material.icons.filled.EditNote
-import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.MoreTime
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -43,6 +54,7 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -87,14 +99,30 @@ fun NoteDetailScreen(
     onSetSpeed: (speed: Float) -> Unit,
     onSaveContent: (newContent: String) -> Unit,
     onRename: () -> Unit,
-    onSyncKeys: () -> Unit,
     onMove: () -> Unit,
     onDelete: () -> Unit,
+    onTogglePin: () -> Unit = {},
+    onOpenFullScreenEditor: () -> Unit = {},
+    onAddTimestamp: (timeMs: Long, formattedTime: String, label: String) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
-    var contentText by remember(note.id) { mutableStateOf(note.noteContent) }
+    var contentText by remember(note.id, note.noteContent) { mutableStateOf(note.noteContent) }
+    var contentFieldValue by remember(note.id, note.noteContent) {
+        mutableStateOf(
+            TextFieldValue(
+                text = note.noteContent,
+                selection = TextRange(note.noteContent.length)
+            )
+        )
+    }
+    var isPreviewMode by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
     var isDirty by remember { mutableStateOf(false) }
+    var showTimestampsDialog by remember { mutableStateOf(false) }
+    var showAddTimestampDialog by remember { mutableStateOf(false) }
+    var timestampLabelInput by remember { mutableStateOf("") }
+    var pendingTimestampPos by remember { mutableStateOf(0L) }
+    var pendingTimestampFormatted by remember { mutableStateOf("00:00") }
 
     val isThisNotePlaying = playerState.isPlaying && playerState.currentNoteId == note.id
     val effectivePosition = if (playerState.currentNoteId == note.id) playerState.currentPositionMs else 0L
@@ -106,6 +134,14 @@ fun NoteDetailScreen(
     val dateFormatted = remember(note.createdAt) {
         val sdf = SimpleDateFormat("MMM dd, yyyy • h:mm a", Locale.getDefault())
         sdf.format(Date(note.createdAt))
+    }
+
+    // System back handler: Save note if edited and close
+    BackHandler {
+        if (isDirty) {
+            onSaveContent(contentFieldValue.text)
+        }
+        onBack()
     }
 
     Surface(
@@ -140,6 +176,28 @@ fun NoteDetailScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = onOpenFullScreenEditor,
+                        modifier = Modifier.testTag("detail_open_full_editor_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.EditNote,
+                            contentDescription = "Open in Full Screen Editor",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    IconButton(
+                        onClick = onTogglePin,
+                        modifier = Modifier.testTag("detail_pin_button")
+                    ) {
+                        Icon(
+                            imageVector = if (note.isPinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
+                            contentDescription = if (note.isPinned) "Unpin Note" else "Pin Note",
+                            tint = if (note.isPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
                     if (isDirty) {
                         IconButton(onClick = {
                             onSaveContent(contentText)
@@ -158,11 +216,24 @@ fun NoteDetailScreen(
                         onDismissRequest = { showMenu = false }
                     ) {
                         DropdownMenuItem(
-                            text = { Text("Sync Keys") },
-                            leadingIcon = { Icon(Icons.Default.Key, contentDescription = null, tint = TimestampFlagColor) },
+                            text = { Text("Open in Full-Screen Editor") },
+                            leadingIcon = { Icon(Icons.Default.EditNote, contentDescription = null) },
                             onClick = {
                                 showMenu = false
-                                onSyncKeys()
+                                onOpenFullScreenEditor()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (note.isPinned) "Unpin Note" else "Pin Note") },
+                            leadingIcon = {
+                                Icon(
+                                    if (note.isPinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
+                                    contentDescription = null
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                onTogglePin()
                             }
                         )
                         DropdownMenuItem(
@@ -249,7 +320,7 @@ fun NoteDetailScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // Player Controls Row: Speed, Play/Pause, File info
+                    // Player Controls Row: Speed, Play/Pause
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -285,15 +356,54 @@ fun NoteDetailScreen(
                             )
                         }
 
-                        // Format info pill
-                        Text(
-                            text = ".mp3",
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary,
+                        // Format info pill & alive equalizer
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
                             modifier = Modifier
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(MaterialTheme.colorScheme.primaryContainer)
                                 .padding(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Text(
+                                text = ".mp3",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            if (isThisNotePlaying) {
+                                PlayingEqualizerBars(isPlaying = true)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Flag Timestamp Button at Current Playback Time
+                    FilledTonalButton(
+                        onClick = {
+                            pendingTimestampPos = effectivePosition
+                            pendingTimestampFormatted = formatMs(effectivePosition)
+                            timestampLabelInput = "Flag at $pendingTimestampFormatted"
+                            showAddTimestampDialog = true
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = TimestampFlagColor.copy(alpha = 0.15f),
+                            contentColor = TimestampFlagColor
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("detail_flag_timestamp_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.BookmarkAdd,
+                            contentDescription = "Flag Timestamp",
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Flag Timestamp at $currentFormatted",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
                         )
                     }
                 }
@@ -356,40 +466,256 @@ fun NoteDetailScreen(
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Write Notes (.txt file)",
+                                text = "Notes",
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                             )
                         }
 
-                        if (isDirty) {
-                            Text(
-                                text = "Unsaved edits",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.error
-                            )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            // Edit / Preview Pill Toggle
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                modifier = Modifier.padding(end = 4.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (!isPreviewMode) MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent,
+                                        modifier = Modifier
+                                            .clickable { isPreviewMode = false }
+                                            .testTag("detail_notes_edit_tab")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Edit,
+                                                contentDescription = "Edit",
+                                                modifier = Modifier.size(13.dp),
+                                                tint = if (!isPreviewMode) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Spacer(modifier = Modifier.width(3.dp))
+                                            Text(
+                                                text = "Edit",
+                                                fontSize = 11.sp,
+                                                fontWeight = if (!isPreviewMode) FontWeight.Bold else FontWeight.Medium,
+                                                color = if (!isPreviewMode) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (isPreviewMode) MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent,
+                                        modifier = Modifier
+                                            .clickable { isPreviewMode = true }
+                                            .testTag("detail_notes_preview_tab")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Visibility,
+                                                contentDescription = "Preview",
+                                                modifier = Modifier.size(13.dp),
+                                                tint = if (isPreviewMode) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Spacer(modifier = Modifier.width(3.dp))
+                                            Text(
+                                                text = "Preview",
+                                                fontSize = 11.sp,
+                                                fontWeight = if (isPreviewMode) FontWeight.Bold else FontWeight.Medium,
+                                                color = if (isPreviewMode) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            // "Clock and Plus" icon button: shows timestamps that user can add to the note automatically in one click
+                            IconButton(
+                                onClick = { showTimestampsDialog = true },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .testTag("clock_and_plus_timestamps_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.MoreTime,
+                                    contentDescription = "Show and Add Timestamps",
+                                    tint = TimestampFlagColor,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+
+                            if (isDirty) {
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Unsaved",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
-                    OutlinedTextField(
-                        value = contentText,
-                        onValueChange = {
-                            contentText = it
-                            isDirty = true
-                        },
-                        placeholder = { Text("No written notes recorded for this voice note. Type here to add notes...") },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f)
-                            .testTag("detail_note_content_input"),
-                        shape = RoundedCornerShape(14.dp)
-                    )
+                    if (!isPreviewMode) {
+                        // EDIT MODE: Toolbar + OutlinedTextField
+                        MarkdownEditorToolbar(
+                            value = contentFieldValue,
+                            onValueChange = { newValue ->
+                                contentFieldValue = newValue
+                                contentText = newValue.text
+                                isDirty = true
+                            },
+                            currentTimestampFormatted = currentFormatted,
+                            onInsertTimestamp = {
+                                val tag = "\n- **[$currentFormatted]** "
+                                val updated = insertTextAtCursor(contentFieldValue, tag)
+                                contentFieldValue = updated
+                                contentText = updated.text
+                                isDirty = true
+                            },
+                            modifier = Modifier.padding(bottom = 6.dp)
+                        )
+
+                        OutlinedTextField(
+                            value = contentFieldValue,
+                            onValueChange = {
+                                contentFieldValue = it
+                                contentText = it.text
+                                isDirty = true
+                            },
+                            placeholder = { Text("Write in Markdown, format with toolbar above, or tap clock icon to insert timestamps...") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .testTag("detail_note_content_input"),
+                            shape = RoundedCornerShape(14.dp)
+                        )
+                    } else {
+                        // PREVIEW MODE: Rich Markdown preview with clickable timestamps
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                        ) {
+                            MarkdownPreview(
+                                markdown = contentFieldValue.text,
+                                onTimestampClick = { tsStr ->
+                                    val ms = parseFormattedTimeToMs(tsStr)
+                                    if (ms >= 0) {
+                                        onSeek(ms)
+                                    }
+                                },
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    }
                 }
             }
         }
+    }
+
+    // Flag Timestamp Dialog once recording is done
+    if (showAddTimestampDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddTimestampDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Bookmark, contentDescription = null, tint = TimestampFlagColor)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Flag Timestamp")
+                }
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "Flag timestamp at $pendingTimestampFormatted for this voice note.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = timestampLabelInput,
+                        onValueChange = { timestampLabelInput = it },
+                        label = { Text("Label / Note") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val label = timestampLabelInput.trim().ifBlank { "Point at $pendingTimestampFormatted" }
+                        onAddTimestamp(pendingTimestampPos, pendingTimestampFormatted, label)
+                        showAddTimestampDialog = false
+                    }
+                ) {
+                    Text("Save Timestamp")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showAddTimestampDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Timestamps Selection Dialog (Clock and Plus action)
+    if (showTimestampsDialog) {
+        TimestampsSelectionDialog(
+            timestamps = markers.map {
+                com.example.data.model.SyncTimestampItem(timeMs = it.timeMs, formattedTime = it.formattedTime, label = it.label)
+            },
+            onInsertAll = {
+                val mdBlock = buildString {
+                    append("\n\n### Timestamps\n")
+                    markers.forEach { m ->
+                        append("- **[${m.formattedTime}]** ${m.label}\n")
+                    }
+                }
+                val newText = contentText + mdBlock
+                contentText = newText
+                contentFieldValue = TextFieldValue(text = newText, selection = TextRange(newText.length))
+                isDirty = true
+            },
+            onInsertSingle = { item ->
+                val newText = contentText + "\n- **[${item.formattedTime}]** ${item.label}"
+                contentText = newText
+                contentFieldValue = TextFieldValue(text = newText, selection = TextRange(newText.length))
+                isDirty = true
+            },
+            onFlagCurrentTime = {
+                val currentPos = effectivePosition
+                val formatted = formatMs(currentPos)
+                onAddTimestamp(currentPos, formatted, "Point at $formatted")
+            },
+            onDismiss = { showTimestampsDialog = false }
+        )
+    }
+}
+
+private fun parseFormattedTimeToMs(time: String): Long {
+    val parts = time.split(":")
+    return if (parts.size == 2) {
+        val mins = parts[0].toLongOrNull() ?: 0L
+        val secs = parts[1].toLongOrNull() ?: 0L
+        (mins * 60 + secs) * 1000L
+    } else {
+        0L
     }
 }
 

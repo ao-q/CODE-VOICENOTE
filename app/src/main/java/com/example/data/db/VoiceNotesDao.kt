@@ -60,6 +60,12 @@ interface VoiceNotesDao {
     @Query("DELETE FROM voice_notes WHERE id = :id")
     suspend fun deleteVoiceNoteById(id: Long)
 
+    @Query("UPDATE voice_notes SET isPinned = :isPinned WHERE id = :id")
+    suspend fun updatePinned(id: Long, isPinned: Boolean)
+
+    @Query("SELECT * FROM voice_notes WHERE isPinned = 1 ORDER BY createdAt DESC")
+    fun getPinnedVoiceNotes(): Flow<List<VoiceNoteEntity>>
+
     @Query("SELECT * FROM voice_notes WHERE title LIKE '%' || :query || '%' OR noteContent LIKE '%' || :query || '%' ORDER BY createdAt DESC")
     fun searchVoiceNotes(query: String): Flow<List<VoiceNoteEntity>>
 

@@ -74,7 +74,7 @@ fun RenameNoteDialog(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = "Renaming automatically synchronizes the titled folder, .mp3 file, and .txt notes file on local storage.",
+                    text = "Renaming automatically synchronizes the titled folder, .mp3 file, and .md markdown notes file on local storage.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     lineHeight = 18.sp
