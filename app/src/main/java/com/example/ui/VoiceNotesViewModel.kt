@@ -414,18 +414,18 @@ class VoiceNotesViewModel(application: Application) : AndroidViewModel(applicati
     // ==========================================
     // Recording & Write Notes
     // ==========================================
-    fun startRecording() {
+    fun startRecording(initialTitle: String = "", initialNotes: String = "") {
         viewModelScope.launch {
             recordingStartTimeMs = System.currentTimeMillis()
-            liveRecordingTitle.value = ""
-            liveRecordingNotes.value = ""
+            liveRecordingTitle.value = initialTitle
+            liveRecordingNotes.value = initialNotes
             RecordingStateManager.reset()
 
             val folderHierarchy = repository.getFolderHierarchyNames(_currentFolderId.value)
             // Prepare initial placeholder locations; will be finalized upon saving
             val locations = storageManager.prepareRecordingLocations(
                 parentFolderHierarchy = folderHierarchy,
-                userTitle = null,
+                userTitle = initialTitle.ifBlank { null },
                 timestamp = recordingStartTimeMs
             )
             activeRecordingLocations = locations

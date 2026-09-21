@@ -73,6 +73,7 @@ fun FullScreenMarkdownEditor(
     onPlayToggle: () -> Unit,
     onSeek: (positionMs: Long) -> Unit,
     onSetSpeed: (speed: Float) -> Unit,
+    onStartRecording: ((title: String, content: String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -280,6 +281,25 @@ fun FullScreenMarkdownEditor(
                             )
                         }
 
+                        // Mic icon: directly record voice note (audio + markdown in same folder)
+                        IconButton(
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                if (isDirty) {
+                                    onSave(note?.id, title, contentValue.text, isPinned)
+                                    isDirty = false
+                                }
+                                onStartRecording?.invoke(title, contentValue.text)
+                            },
+                            modifier = Modifier.testTag("editor_record_voice_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Mic,
+                                contentDescription = "Record Voice Note (Audio & Markdown saved in same folder)",
+                                tint = RecorderRed
+                            )
+                        }
+
                         // Explicit Save Icon Button
                         IconButton(
                             onClick = {
@@ -383,6 +403,17 @@ fun FullScreenMarkdownEditor(
                                                 text = "Voice Recording Audio",
                                                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
                                             )
+                                            Surface(
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                            ) {
+                                                Text(
+                                                    text = "MP3",
+                                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp),
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                                )
+                                            }
                                             if (isPlayingThis) {
                                                 PlayingEqualizerBars(isPlaying = true)
                                             }

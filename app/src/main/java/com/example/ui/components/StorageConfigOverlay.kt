@@ -268,6 +268,15 @@ fun StorageConfigOverlay(
                     modifier = Modifier.padding(horizontal = 4.dp)
                 )
 
+                Text(
+                    text = "Each note saves as .mp3 audio & .md markdown in its own folder",
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                )
+
                 Spacer(modifier = Modifier.height(20.dp))
 
                 // Action buttons: Cancel and Save

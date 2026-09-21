@@ -161,6 +161,8 @@ fun MainVoiceNotesScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var showOverlayPermissionDialog by remember { mutableStateOf(false) }
     var isSearchVisible by remember { mutableStateOf(false) }
+    var pendingInitialTitle by remember { mutableStateOf("") }
+    var pendingInitialNotes by remember { mutableStateOf("") }
 
     // Permission request handling
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -171,7 +173,9 @@ fun MainVoiceNotesScreen(
             if (!FloatingRecordingOverlayManager.canDrawOverlays(context)) {
                 showOverlayPermissionDialog = true
             } else {
-                viewModel.startRecording()
+                viewModel.startRecording(pendingInitialTitle, pendingInitialNotes)
+                pendingInitialTitle = ""
+                pendingInitialNotes = ""
             }
         }
     }
@@ -197,7 +201,10 @@ fun MainVoiceNotesScreen(
         }
     }
 
-    fun checkAndStartRecording() {
+    fun checkAndStartRecording(initialTitle: String = "", initialNotes: String = "") {
+        pendingInitialTitle = initialTitle
+        pendingInitialNotes = initialNotes
+
         val hasAudio = ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.RECORD_AUDIO
@@ -212,7 +219,9 @@ fun MainVoiceNotesScreen(
             if (!FloatingRecordingOverlayManager.canDrawOverlays(context)) {
                 showOverlayPermissionDialog = true
             } else {
-                viewModel.startRecording()
+                viewModel.startRecording(pendingInitialTitle, pendingInitialNotes)
+                pendingInitialTitle = ""
+                pendingInitialNotes = ""
             }
         } else {
             permissionLauncher.launch(permissionsToAsk.toTypedArray())
@@ -224,7 +233,9 @@ fun MainVoiceNotesScreen(
         AlertDialog(
             onDismissRequest = {
                 showOverlayPermissionDialog = false
-                viewModel.startRecording()
+                viewModel.startRecording(pendingInitialTitle, pendingInitialNotes)
+                pendingInitialTitle = ""
+                pendingInitialNotes = ""
             },
             icon = {
                 Icon(
@@ -246,7 +257,9 @@ fun MainVoiceNotesScreen(
                     onClick = {
                         showOverlayPermissionDialog = false
                         FloatingRecordingOverlayManager.requestOverlayPermission(context)
-                        viewModel.startRecording()
+                        viewModel.startRecording(pendingInitialTitle, pendingInitialNotes)
+                        pendingInitialTitle = ""
+                        pendingInitialNotes = ""
                     }
                 ) {
                     Text("Enable in Settings")
@@ -256,7 +269,9 @@ fun MainVoiceNotesScreen(
                 TextButton(
                     onClick = {
                         showOverlayPermissionDialog = false
-                        viewModel.startRecording()
+                        viewModel.startRecording(pendingInitialTitle, pendingInitialNotes)
+                        pendingInitialTitle = ""
+                        pendingInitialNotes = ""
                     }
                 ) {
                     Text("Continue Without")
@@ -322,7 +337,11 @@ fun MainVoiceNotesScreen(
                 uiState.fullScreenEditorNote?.let { viewModel.togglePlayNote(it) }
             },
             onSeek = { viewModel.audioPlayerManager.seekTo(it) },
-            onSetSpeed = { viewModel.audioPlayerManager.setSpeed(it) }
+            onSetSpeed = { viewModel.audioPlayerManager.setSpeed(it) },
+            onStartRecording = { title, content ->
+                viewModel.closeFullScreenEditor()
+                checkAndStartRecording(title, content)
+            }
         )
         return
     }
@@ -716,6 +735,7 @@ fun MainVoiceNotesScreen(
                             notes = allNotes,
                             playerState = playerState,
                             onCreateNewNote = { viewModel.openFullScreenEditorForNew() },
+                            onStartRecording = { checkAndStartRecording() },
                             onOpenNoteInEditor = { note -> viewModel.openFullScreenEditorForNote(note) },
                             onTogglePin = { note -> viewModel.togglePinNote(note) },
                             onPlayToggle = { note -> viewModel.togglePlayNote(note) },

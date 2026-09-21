@@ -49,6 +49,7 @@ fun WriteNotesSection(
     notes: List<VoiceNoteEntity>,
     playerState: PlayerState,
     onCreateNewNote: () -> Unit,
+    onStartRecording: () -> Unit,
     onOpenNoteInEditor: (VoiceNoteEntity) -> Unit,
     onTogglePin: (VoiceNoteEntity) -> Unit,
     onPlayToggle: (VoiceNoteEntity) -> Unit,
@@ -85,38 +86,102 @@ fun WriteNotesSection(
             .fillMaxSize()
             .testTag("write_notes_section")
     ) {
-        // Top Action Card: "+ New Note"
-        Surface(
+        // Top Quick Actions: "Record Voice Note" (Mic) & "New Markdown Note"
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 6.dp)
-                .clickable {
-                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onCreateNewNote()
-                }
-                .testTag("create_new_markdown_note_card"),
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-            border = androidx.compose.foundation.BorderStroke(
-                1.dp,
-                MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-            )
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Row(
+            // Card 1: Record Voice Note directly
+            Surface(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .weight(1f)
+                    .clickable {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onStartRecording()
+                    }
+                    .testTag("write_notes_record_voice_card"),
+                shape = RoundedCornerShape(18.dp),
+                color = RecorderRed.copy(alpha = 0.08f),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.2.dp,
+                    RecorderRed.copy(alpha = 0.4f)
+                )
             ) {
                 Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.weight(1f)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(42.dp)
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(
+                                Brush.linearGradient(
+                                    colors = listOf(
+                                        RecorderRed,
+                                        Color(0xFFE53935)
+                                    )
+                                )
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Mic,
+                            contentDescription = "Record Voice Note",
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Record Note",
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1
+                        )
+                        Text(
+                            text = ".mp3 audio & .md note",
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                            color = RecorderRed,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+
+            // Card 2: Write Markdown Note
+            Surface(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onCreateNewNote()
+                    }
+                    .testTag("create_new_markdown_note_card"),
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.2.dp,
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
+                )
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
                             .clip(CircleShape)
                             .background(
                                 Brush.linearGradient(
@@ -130,44 +195,27 @@ fun WriteNotesSection(
                     ) {
                         Icon(
                             imageVector = Icons.Default.EditNote,
-                            contentDescription = null,
+                            contentDescription = "New Markdown Note",
                             tint = Color.White,
                             modifier = Modifier.size(24.dp)
                         )
                     }
 
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "New Markdown Note",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                            color = MaterialTheme.colorScheme.onSurface
+                            text = "Write Note",
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1
                         )
                         Text(
-                            text = "Markdown (.md) with auto-save",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = "Markdown text file",
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
-                }
-
-                FilledIconButton(
-                    onClick = {
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onCreateNewNote()
-                    },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .testTag("create_markdown_note_button"),
-                    colors = IconButtonDefaults.filledIconButtonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    )
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Create Markdown Note",
-                        modifier = Modifier.size(22.dp)
-                    )
                 }
             }
         }
@@ -188,6 +236,20 @@ fun WriteNotesSection(
                 if (searchQuery.isNotBlank()) {
                     IconButton(onClick = { searchQuery = "" }) {
                         Icon(Icons.Default.Close, contentDescription = "Clear search")
+                    }
+                } else {
+                    IconButton(
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onStartRecording()
+                        },
+                        modifier = Modifier.testTag("write_notes_search_mic_button")
+                    ) {
+                        Icon(
+                            Icons.Default.Mic,
+                            contentDescription = "Record Voice Note (Audio + Notes in same folder)",
+                            tint = RecorderRed
+                        )
                     }
                 }
             },
@@ -266,15 +328,39 @@ fun WriteNotesSection(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                     )
-                    Button(
-                        onClick = {
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onCreateNewNote()
-                        },
-                        shape = RoundedCornerShape(12.dp),
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                         modifier = Modifier.padding(top = 8.dp)
                     ) {
-                        Text("+ Write First Note")
+                        OutlinedButton(
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onStartRecording()
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = RecorderRed
+                            ),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, RecorderRed.copy(alpha = 0.5f)),
+                            modifier = Modifier.testTag("empty_state_record_button")
+                        ) {
+                            Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Record Voice")
+                        }
+
+                        Button(
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onCreateNewNote()
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.testTag("empty_state_write_button")
+                        ) {
+                            Icon(Icons.Default.EditNote, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Write Note")
+                        }
                     }
                 }
             }
