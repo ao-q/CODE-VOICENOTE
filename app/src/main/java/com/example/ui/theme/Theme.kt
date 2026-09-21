@@ -1,66 +1,55 @@
 package com.example.ui.theme
 
-import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Coral80,
-    onPrimary = Color(0xFF680009),
-    primaryContainer = DarkPrimaryContainer,
-    onPrimaryContainer = DarkOnPrimaryContainer,
+// Moon Theme (Charcoal Black / OLED)
+val CharcoalColorScheme = darkColorScheme(
+    primary = CharcoalPrimary,
+    onPrimary = CharcoalOnPrimary,
+    primaryContainer = CharcoalPrimaryContainer,
+    onPrimaryContainer = CharcoalOnPrimaryContainer,
     secondary = Color(0xFFE7BDB8),
     onSecondary = Color(0xFF442927),
-    secondaryContainer = Color(0xFF5D3F3C),
+    secondaryContainer = Color(0xFF32343D),
     onSecondaryContainer = Color(0xFFFFDAD6),
     tertiary = TimestampFlagColor,
-    background = DarkBackground,
-    onBackground = DarkOnSurface,
-    surface = DarkSurface,
-    onSurface = DarkOnSurface,
-    surfaceVariant = DarkSurfaceVariant,
-    onSurfaceVariant = DarkOnSurfaceVariant
+    background = CharcoalBackground,
+    onBackground = CharcoalOnSurface,
+    surface = CharcoalSurface,
+    onSurface = CharcoalOnSurface,
+    surfaceVariant = CharcoalSurfaceVariant,
+    onSurfaceVariant = CharcoalOnSurfaceVariant
 )
 
-private val LightColorScheme = lightColorScheme(
-    primary = LightPrimary,
-    onPrimary = LightOnPrimary,
-    primaryContainer = LightPrimaryContainer,
-    onPrimaryContainer = LightOnPrimaryContainer,
-    secondary = Color(0xFF775653),
+// Sun Theme (Warm Amber / Sepia Paper)
+val WarmColorScheme = lightColorScheme(
+    primary = WarmPrimary,
+    onPrimary = WarmOnPrimary,
+    primaryContainer = WarmPrimaryContainer,
+    onPrimaryContainer = WarmOnPrimaryContainer,
+    secondary = Color(0xFF8D5B4C),
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFFFDAD6),
-    onSecondaryContainer = Color(0xFF2C1513),
+    secondaryContainer = Color(0xFFFFDBCF),
+    onSecondaryContainer = Color(0xFF380D03),
     tertiary = TimestampFlagColor,
-    background = LightBackground,
-    onBackground = LightOnSurface,
-    surface = LightSurface,
-    onSurface = LightOnSurface,
-    surfaceVariant = LightSurfaceVariant,
-    onSurfaceVariant = LightOnSurfaceVariant
+    background = WarmBackground,
+    onBackground = WarmOnSurface,
+    surface = WarmSurface,
+    onSurface = WarmOnSurface,
+    surfaceVariant = WarmSurfaceVariant,
+    onSurfaceVariant = WarmOnSurfaceVariant
 )
 
 @Composable
 fun VoiceNotesTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = true,
+    darkTheme: Boolean = true,
     content: @Composable () -> Unit,
 ) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
-    }
+    val colorScheme = if (darkTheme) CharcoalColorScheme else WarmColorScheme
 
     MaterialTheme(
         colorScheme = colorScheme,
@@ -68,3 +57,4 @@ fun VoiceNotesTheme(
         content = content
     )
 }
+

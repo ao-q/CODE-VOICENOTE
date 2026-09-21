@@ -1,6 +1,11 @@
 package com.example.ui.components
 
+import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -22,6 +27,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.PaddingValues
@@ -44,10 +55,13 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import com.example.service.FloatingFaceCamOverlayManager
 import com.example.service.FloatingRecordingOverlayManager
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -101,8 +115,18 @@ fun ActiveRecordingPane(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val title by titleFlow.collectAsState()
     val notes by notesFlow.collectAsState()
+    val isFaceCamActive by FloatingFaceCamOverlayManager.isShowingState.collectAsState()
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            FloatingFaceCamOverlayManager.show(context)
+        }
+    }
 
     // Pulsing recording indicator animation
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
@@ -141,6 +165,9 @@ fun ActiveRecordingPane(
                         RecordingStudioSection(
                             sessionState = sessionState,
                             pulseScale = pulseScale,
+                            isFaceCamActive = isFaceCamActive,
+                            onToggleFaceCam = { FloatingFaceCamOverlayManager.toggle(context) },
+                            onLaunchCameraPermission = { cameraPermissionLauncher.launch(Manifest.permission.CAMERA) },
                             onPause = onPause,
                             onResume = onResume,
                             onFlagTimestamp = onFlagTimestamp,
@@ -173,6 +200,9 @@ fun ActiveRecordingPane(
                     RecordingStudioSection(
                         sessionState = sessionState,
                         pulseScale = pulseScale,
+                        isFaceCamActive = isFaceCamActive,
+                        onToggleFaceCam = { FloatingFaceCamOverlayManager.toggle(context) },
+                        onLaunchCameraPermission = { cameraPermissionLauncher.launch(Manifest.permission.CAMERA) },
                         onPause = onPause,
                         onResume = onResume,
                         onFlagTimestamp = onFlagTimestamp,
@@ -195,6 +225,13 @@ fun ActiveRecordingPane(
                     )
                 }
             }
+
+            // Floating FaceCam Selfie Overlay (Draggable live front camera visualization for native screen recording)
+            if (isFaceCamActive) {
+                FaceCamOverlay(
+                    onClose = { FloatingFaceCamOverlayManager.hide() }
+                )
+            }
         }
     }
 }
@@ -203,6 +240,9 @@ fun ActiveRecordingPane(
 private fun RecordingStudioSection(
     sessionState: RecordingSessionState,
     pulseScale: Float,
+    isFaceCamActive: Boolean,
+    onToggleFaceCam: () -> Unit,
+    onLaunchCameraPermission: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
     onFlagTimestamp: (String?) -> Unit,
@@ -258,6 +298,26 @@ private fun RecordingStudioSection(
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // FaceCam Overlay Button (Selfie Camera Popup for Screen Recording)
+                    IconButton(
+                        onClick = {
+                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                                onToggleFaceCam()
+                            } else {
+                                onLaunchCameraPermission()
+                            }
+                        },
+                        modifier = Modifier
+                            .size(36.dp)
+                            .testTag("facecam_overlay_button")
+                    ) {
+                        Icon(
+                            imageVector = if (isFaceCamActive) Icons.Default.Videocam else Icons.Default.VideocamOff,
+                            contentDescription = "FaceCam Popup Overlay",
+                            tint = if (isFaceCamActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
                     IconButton(
                         onClick = {
                             if (FloatingRecordingOverlayManager.canDrawOverlays(context)) {
@@ -657,25 +717,97 @@ private fun WriteNotesSection(
                     modifier = Modifier.padding(bottom = 6.dp)
                 )
 
-                // Notes Text Area
-                OutlinedTextField(
-                    value = notesFieldValue,
-                    onValueChange = { newValue ->
-                        notesFieldValue = newValue
-                        onNotesChange(newValue.text)
-                    },
-                    placeholder = { Text("Write notes in Markdown, format with toolbar above, or tap clock icon to insert timestamps...") },
-                    singleLine = false,
+                // Line-Numbered Notes Text Area
+                val notesScrollState = rememberScrollState()
+                val lineCount = remember(notesFieldValue.text) {
+                    if (notesFieldValue.text.isEmpty()) 1 else notesFieldValue.text.count { it == '\n' } + 1
+                }
+                val lineNumbersText = remember(lineCount) {
+                    (1..lineCount).joinToString("\n")
+                }
+
+                Surface(
                     shape = RoundedCornerShape(14.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .testTag("note_content_input")
-                )
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(vertical = 10.dp)
+                            .verticalScroll(notesScrollState)
+                    ) {
+                        // Line numbers column
+                        Text(
+                            text = lineNumbersText,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 13.sp,
+                                lineHeight = 22.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                            ),
+                            textAlign = TextAlign.End,
+                            modifier = Modifier
+                                .widthIn(min = 30.dp)
+                                .padding(start = 8.dp, end = 8.dp)
+                        )
+
+                        // Vertical subtle separator
+                        Box(
+                            modifier = Modifier
+                                .width(1.dp)
+                                .height(IntrinsicSize.Min)
+                                .fillMaxHeight()
+                                .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                        )
+
+                        // Text field editing area
+                        BasicTextField(
+                            value = notesFieldValue,
+                            onValueChange = { newValue ->
+                                notesFieldValue = newValue
+                                onNotesChange(newValue.text)
+                            },
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 13.sp,
+                                lineHeight = 22.sp
+                            ),
+                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                            decorationBox = { innerTextField ->
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 10.dp, end = 10.dp)
+                                ) {
+                                    if (notesFieldValue.text.isEmpty()) {
+                                        Text(
+                                            text = "Write notes in Markdown, format with toolbar above, or tap clock icon to insert timestamps...",
+                                            style = MaterialTheme.typography.bodyMedium.copy(
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 13.sp,
+                                                lineHeight = 22.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                                            )
+                                        )
+                                    }
+                                    innerTextField()
+                                }
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("note_content_input")
+                        )
+                    }
+                }
             } else {
                 // PREVIEW MODE
                 Column(

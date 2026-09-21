@@ -37,6 +37,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.VoiceNoteEntity
@@ -155,7 +156,10 @@ fun FullScreenMarkdownEditor(
                 // Top App Bar
                 TopAppBar(
                     title = {
-                        Column {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
                             BasicTextField(
                                 value = title,
                                 onValueChange = {
@@ -179,47 +183,34 @@ fun FullScreenMarkdownEditor(
                                     innerTextField()
                                 },
                                 modifier = Modifier
-                                    .fillMaxWidth()
+                                    .weight(1f)
                                     .testTag("editor_title_input")
                             )
 
-                            // Status pill: Auto-saved indicator or dirty state
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                if (isSaving) {
-                                    Text(
-                                        text = "Saving...",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                } else if (isDirty) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(6.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0xFFE65100))
-                                    )
-                                    Text(
-                                        text = "Unsaved changes",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = Color(0xFFE65100)
-                                    )
-                                } else {
-                                    Icon(
-                                        imageVector = Icons.Default.CheckCircle,
-                                        contentDescription = null,
-                                        tint = Color(0xFF2E7D32),
-                                        modifier = Modifier.size(12.dp)
-                                    )
-                                    Text(
-                                        text = "Saved to storage (.md)",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = Color(0xFF2E7D32)
-                                    )
-                                }
+                            // Status dot (no wrapping text)
+                            if (isSaving) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.primary)
+                                )
+                            } else if (isDirty) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFFE65100))
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = "Saved",
+                                    tint = Color(0xFF2E7D32),
+                                    modifier = Modifier.size(16.dp)
+                                )
                             }
+                            Spacer(modifier = Modifier.width(4.dp))
                         }
                     },
                     navigationIcon = {
@@ -237,35 +228,43 @@ fun FullScreenMarkdownEditor(
                         }
                     },
                     actions = {
-                        // View mode toggle on mobile
+                        // View mode toggle icon (Edit <-> Preview)
                         if (!isTabletOrWide) {
-                            SingleChoiceSegmentedButtonRow(
-                                modifier = Modifier.padding(end = 4.dp)
+                            IconButton(
+                                onClick = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    selectedViewMode = if (selectedViewMode == 0) 1 else 0
+                                },
+                                modifier = Modifier.testTag("toggle_preview_button")
                             ) {
-                                SegmentedButton(
-                                    selected = selectedViewMode == 0,
-                                    onClick = {
-                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        selectedViewMode = 0
-                                    },
-                                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
-                                ) {
-                                    Text("Edit", fontSize = 12.sp)
-                                }
-                                SegmentedButton(
-                                    selected = selectedViewMode == 1,
-                                    onClick = {
-                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        selectedViewMode = 1
-                                    },
-                                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
-                                ) {
-                                    Text("Preview", fontSize = 12.sp)
-                                }
+                                Icon(
+                                    imageVector = if (selectedViewMode == 0) Icons.Default.Visibility else Icons.Default.Edit,
+                                    contentDescription = if (selectedViewMode == 0) "Preview Note" else "Edit Note",
+                                    tint = if (selectedViewMode == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
                             }
                         }
 
-                        // Pin toggle button
+                        // Insert audio timestamp icon if has audio
+                        if (hasAudio) {
+                            IconButton(
+                                onClick = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    val tag = "\n- **[$currentTimestampFormatted]** "
+                                    contentValue = insertTextAtCursor(contentValue, tag)
+                                    isDirty = true
+                                },
+                                modifier = Modifier.testTag("insert_timestamp_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Schedule,
+                                    contentDescription = "Insert Audio Timestamp",
+                                    tint = TimestampFlagColor
+                                )
+                            }
+                        }
+
+                        // Pin toggle icon button
                         IconButton(
                             onClick = {
                                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -281,72 +280,53 @@ fun FullScreenMarkdownEditor(
                             )
                         }
 
-                        // Explicit Save Button
-                        if (isDirty) {
-                            FilledTonalButton(
-                                onClick = {
-                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    onSave(note?.id, title, contentValue.text, isPinned)
-                                    isDirty = false
-                                },
-                                shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                                modifier = Modifier.testTag("editor_save_button")
-                            ) {
-                                Text("Save", fontSize = 12.sp)
-                            }
-                        }
-
-                        // Overflow Menu
+                        // Explicit Save Icon Button
                         IconButton(
-                            onClick = { showMenu = true },
-                            modifier = Modifier.testTag("editor_menu_button")
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onSave(note?.id, title, contentValue.text, isPinned)
+                                isDirty = false
+                            },
+                            modifier = Modifier.testTag("editor_save_button")
                         ) {
-                            Icon(Icons.Default.MoreVert, contentDescription = "More Options")
+                            Icon(
+                                imageVector = Icons.Default.Save,
+                                contentDescription = "Save Note",
+                                tint = if (isDirty) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
 
-                        DropdownMenu(
-                            expanded = showMenu,
-                            onDismissRequest = { showMenu = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Share Note (Markdown)") },
-                                leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
-                                onClick = {
-                                    showMenu = false
-                                    val sendIntent = Intent().apply {
-                                        action = Intent.ACTION_SEND
-                                        putExtra(Intent.EXTRA_TITLE, title)
-                                        putExtra(Intent.EXTRA_SUBJECT, title)
-                                        putExtra(Intent.EXTRA_TEXT, "# $title\n\n${contentValue.text}")
-                                        type = "text/plain"
-                                    }
-                                    context.startActivity(Intent.createChooser(sendIntent, "Share Markdown Note"))
+                        // Share / Export icon button
+                        IconButton(
+                            onClick = {
+                                val sendIntent = Intent().apply {
+                                    action = Intent.ACTION_SEND
+                                    putExtra(Intent.EXTRA_TITLE, title.ifBlank { "Voice Note" })
+                                    putExtra(Intent.EXTRA_SUBJECT, title.ifBlank { "Voice Note" })
+                                    putExtra(Intent.EXTRA_TEXT, "# $title\n\n${contentValue.text}")
+                                    type = "text/plain"
                                 }
+                                context.startActivity(Intent.createChooser(sendIntent, "Share Markdown Note"))
+                            },
+                            modifier = Modifier.testTag("editor_share_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Share,
+                                contentDescription = "Share Markdown",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        }
 
-                            if (hasAudio) {
-                                DropdownMenuItem(
-                                    text = { Text("Insert Audio Timestamp") },
-                                    leadingIcon = { Icon(Icons.Default.Schedule, contentDescription = null, tint = TimestampFlagColor) },
-                                    onClick = {
-                                        showMenu = false
-                                        val tag = "\n- **[$currentTimestampFormatted]** "
-                                        contentValue = insertTextAtCursor(contentValue, tag)
-                                        isDirty = true
-                                    }
-                                )
-                            }
-
-                            if (!isNewNote) {
-                                HorizontalDivider()
-                                DropdownMenuItem(
-                                    text = { Text("Delete Note", color = MaterialTheme.colorScheme.error) },
-                                    leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
-                                    onClick = {
-                                        showMenu = false
-                                        showDeleteDialog = true
-                                    }
+                        // Delete icon button
+                        if (!isNewNote) {
+                            IconButton(
+                                onClick = { showDeleteDialog = true },
+                                modifier = Modifier.testTag("editor_delete_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Delete Note",
+                                    tint = MaterialTheme.colorScheme.error
                                 )
                             }
                         }
@@ -622,6 +602,14 @@ private fun EditorTextField(
     onValueChange: (TextFieldValue) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val scrollState = rememberScrollState()
+    val lineCount = remember(value.text) {
+        if (value.text.isEmpty()) 1 else value.text.count { it == '\n' } + 1
+    }
+    val lineNumbersText = remember(lineCount) {
+        (1..lineCount).joinToString("\n")
+    }
+
     Surface(
         modifier = modifier.fillMaxSize(),
         shape = RoundedCornerShape(16.dp),
@@ -631,36 +619,73 @@ private fun EditorTextField(
             MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
         )
     ) {
-        BasicTextField(
-            value = value,
-            onValueChange = onValueChange,
-            textStyle = MaterialTheme.typography.bodyLarge.copy(
-                color = MaterialTheme.colorScheme.onSurface,
-                lineHeight = 24.sp,
-                fontFamily = FontFamily.SansSerif
-            ),
-            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-            decorationBox = { innerTextField ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(16.dp)
-                        .verticalScroll(rememberScrollState())
-                ) {
-                    if (value.text.isEmpty()) {
-                        Text(
-                            text = "Start writing your markdown note here...\n\nUse the toolbar above for formatting: bold, italic, headings, lists, checklists, and code.",
-                            style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 24.sp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                        )
-                    }
-                    innerTextField()
-                }
-            },
+        Row(
             modifier = Modifier
                 .fillMaxSize()
-                .testTag("markdown_editor_text_area")
-        )
+                .padding(vertical = 12.dp)
+                .verticalScroll(scrollState)
+        ) {
+            // Line numbers column
+            Text(
+                text = lineNumbersText,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 14.sp,
+                    lineHeight = 24.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                ),
+                textAlign = TextAlign.End,
+                modifier = Modifier
+                    .widthIn(min = 34.dp)
+                    .padding(start = 10.dp, end = 10.dp)
+            )
+
+            // Vertical subtle line between line numbers and text editor
+            Box(
+                modifier = Modifier
+                    .width(1.dp)
+                    .height(IntrinsicSize.Min)
+                    .fillMaxHeight()
+                    .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+            )
+
+            // Text field editing area
+            BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 14.sp,
+                    lineHeight = 24.sp
+                ),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                decorationBox = { innerTextField ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 12.dp, end = 14.dp)
+                    ) {
+                        if (value.text.isEmpty()) {
+                            Text(
+                                text = "Start writing your markdown note here...\n\nUse the toolbar above for formatting: bold, italic, headings, lists, tables, arrows, and code.",
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 14.sp,
+                                    lineHeight = 24.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                                )
+                            )
+                        }
+                        innerTextField()
+                    }
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("markdown_editor_text_area")
+            )
+        }
     }
 }
 

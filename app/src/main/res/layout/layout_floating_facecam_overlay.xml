@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/facecam_root"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:clickable="true"
+    android:focusable="true">
+
+    <!-- Camera Container with shape clipping -->
+    <FrameLayout
+        android:id="@+id/facecam_camera_container"
+        android:layout_width="150dp"
+        android:layout_height="150dp"
+        android:background="#000000"
+        android:elevation="12dp">
+
+        <androidx.camera.view.PreviewView
+            android:id="@+id/facecam_preview_view"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <!-- Accent Border Overlay -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_facecam_border" />
+    </FrameLayout>
+
+    <!-- Quick Control Bar Overlay -->
+    <LinearLayout
+        android:id="@+id/facecam_controls_panel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="6dp"
+        android:orientation="horizontal"
+        android:background="@drawable/bg_facecam_controls"
+        android:padding="3dp"
+        android:elevation="16dp"
+        android:visibility="visible">
+
+        <!-- Shape Toggle -->
+        <ImageButton
+            android:id="@+id/facecam_btn_shape"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:background="@drawable/bg_floating_action"
+            android:src="@drawable/ic_facecam_shape"
+            android:scaleType="centerInside"
+            android:contentDescription="Toggle Cutout Shape" />
+
+        <!-- Size Toggle -->
+        <ImageButton
+            android:id="@+id/facecam_btn_size"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginStart="3dp"
+            android:background="@drawable/bg_floating_action"
+            android:src="@drawable/ic_facecam_size"
+            android:scaleType="centerInside"
+            android:contentDescription="Resize Overlay" />
+
+        <!-- Flip Camera -->
+        <ImageButton
+            android:id="@+id/facecam_btn_flip"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginStart="3dp"
+            android:background="@drawable/bg_floating_action"
+            android:src="@drawable/ic_facecam_flip"
+            android:scaleType="centerInside"
+            android:contentDescription="Flip Camera" />
+
+        <!-- Close -->
+        <ImageButton
+            android:id="@+id/facecam_btn_close"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:layout_marginStart="3dp"
+            android:background="@drawable/bg_floating_action"
+            android:src="@drawable/ic_facecam_close"
+            android:scaleType="centerInside"
+            android:contentDescription="Close FaceCam" />
+    </LinearLayout>
+
+</FrameLayout>

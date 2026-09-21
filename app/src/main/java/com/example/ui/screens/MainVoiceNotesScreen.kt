@@ -14,6 +14,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -50,12 +51,17 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.ui.input.pointer.pointerInput
+import com.example.service.FloatingFaceCamOverlayManager
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.AlertDialog
@@ -153,7 +159,6 @@ fun MainVoiceNotesScreen(
     val detailMarkers by viewModel.detailMarkers.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
-    var showTopMenu by remember { mutableStateOf(false) }
     var showOverlayPermissionDialog by remember { mutableStateOf(false) }
     var isSearchVisible by remember { mutableStateOf(false) }
 
@@ -168,6 +173,27 @@ fun MainVoiceNotesScreen(
             } else {
                 viewModel.startRecording()
             }
+        }
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            FloatingFaceCamOverlayManager.show(context)
+        }
+    }
+
+    fun initiateFaceCam() {
+        val hasCamera = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (hasCamera) {
+            FloatingFaceCamOverlayManager.toggle(context)
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
     }
 
@@ -442,52 +468,57 @@ fun MainVoiceNotesScreen(
                     }
                 },
                 actions = {
+                    // Sun / Moon Theme Toggle Icon
+                    IconButton(
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.toggleTheme()
+                        },
+                        modifier = Modifier.testTag("toggle_theme_button")
+                    ) {
+                        Icon(
+                            imageVector = if (uiState.isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
+                            contentDescription = if (uiState.isDarkTheme) "Warm Tint Theme" else "Charcoal Black Theme",
+                            tint = if (uiState.isDarkTheme) Color(0xFFFFB300) else MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    // Direct New Folder icon button on homescreen
+                    IconButton(
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            viewModel.openNewFolderDialog()
+                        },
+                        modifier = Modifier.testTag("create_new_folder_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CreateNewFolder,
+                            contentDescription = "New Folder",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+
                     // Search toggle button
                     IconButton(
                         onClick = { isSearchVisible = !isSearchVisible },
                         modifier = Modifier.testTag("toggle_search_button")
                     ) {
-                        Icon(Icons.Default.Search, contentDescription = "Search Notes")
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Search Notes",
+                            tint = if (isSearchVisible) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        )
                     }
 
-                    // 3-dots overflow menu
+                    // Quick Storage Config icon
                     IconButton(
-                        onClick = { showTopMenu = true },
-                        modifier = Modifier.testTag("main_overflow_menu_button")
+                        onClick = { viewModel.openStorageConfigDialog() },
+                        modifier = Modifier.testTag("storage_config_icon_button")
                     ) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "More Options")
-                    }
-
-                    DropdownMenu(
-                        expanded = showTopMenu,
-                        onDismissRequest = { showTopMenu = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Write Note") },
-                            leadingIcon = { Icon(Icons.Default.EditNote, contentDescription = null) },
-                            onClick = {
-                                showTopMenu = false
-                                viewModel.openWriteNoteDialog()
-                            },
-                            modifier = Modifier.testTag("menu_write_note")
-                        )
-                        DropdownMenuItem(
-                            text = { Text("New Folder") },
-                            leadingIcon = { Icon(Icons.Default.CreateNewFolder, contentDescription = null) },
-                            onClick = {
-                                showTopMenu = false
-                                viewModel.openNewFolderDialog()
-                            },
-                            modifier = Modifier.testTag("menu_new_folder")
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Configure Local Storage") },
-                            leadingIcon = { Icon(Icons.Default.Storage, contentDescription = null) },
-                            onClick = {
-                                showTopMenu = false
-                                viewModel.openStorageConfigDialog()
-                            },
-                            modifier = Modifier.testTag("menu_storage_config")
+                        Icon(
+                            imageVector = Icons.Default.FolderOpen,
+                            contentDescription = "Storage Folder",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 },
@@ -497,20 +528,34 @@ fun MainVoiceNotesScreen(
             )
         },
         floatingActionButton = {
-            // Prominent Stock Android / Pixel Recorder FAB: Simple Red Circular Mic
+            // Prominent Stock Android / Pixel Recorder FAB:
+            // Single tap: start audio recording
+            // Long press / hold: initiate system-wide FaceCam overlay
             FloatingActionButton(
-                onClick = { checkAndStartRecording() },
+                onClick = {},
                 containerColor = RecorderRed,
                 contentColor = Color.White,
                 shape = CircleShape,
                 elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 6.dp),
                 modifier = Modifier
                     .size(64.dp)
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                checkAndStartRecording()
+                            },
+                            onLongPress = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                initiateFaceCam()
+                            }
+                        )
+                    }
                     .testTag("start_recording_fab")
             ) {
                 Icon(
                     imageVector = Icons.Default.Mic,
-                    contentDescription = "Record Voice Note",
+                    contentDescription = "Tap to Record, Hold for FaceCam Overlay",
                     modifier = Modifier.size(32.dp)
                 )
             }
@@ -528,7 +573,7 @@ fun MainVoiceNotesScreen(
                     )
                 }
 
-                // Responsive 3-tab Bottom Navigation Bar: Home, Pins, Write Notes
+                // Icon-only Bottom Navigation Bar
                 NavigationBar(
                     containerColor = MaterialTheme.colorScheme.surface,
                     tonalElevation = 6.dp,
@@ -541,7 +586,7 @@ fun MainVoiceNotesScreen(
                             viewModel.selectTab(MainTab.HOME)
                         },
                         icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
-                        label = { Text("Home") },
+                        alwaysShowLabel = false,
                         modifier = Modifier.testTag("tab_home")
                     )
                     NavigationBarItem(
@@ -566,7 +611,7 @@ fun MainVoiceNotesScreen(
                                 Icon(Icons.Default.PushPin, contentDescription = "Pins")
                             }
                         },
-                        label = { Text("Pins") },
+                        alwaysShowLabel = false,
                         modifier = Modifier.testTag("tab_pins")
                     )
                     NavigationBarItem(
@@ -591,7 +636,7 @@ fun MainVoiceNotesScreen(
                                 Icon(Icons.Default.EditNote, contentDescription = "Write Notes")
                             }
                         },
-                        label = { Text("Write Notes") },
+                        alwaysShowLabel = false,
                         modifier = Modifier.testTag("tab_write_notes")
                     )
                 }

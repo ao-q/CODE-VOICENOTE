@@ -61,6 +61,8 @@ data class VoiceNotesUiState(
     val folderToDelete: FolderEntity? = null,
     val selectedDetailNote: VoiceNoteEntity? = null,
     val isDetailViewOpen: Boolean = false,
+    val isDarkTheme: Boolean = true,
+    val isFaceCamActive: Boolean = false,
     val statusMessage: String? = null
 )
 
@@ -74,6 +76,7 @@ class VoiceNotesViewModel(application: Application) : AndroidViewModel(applicati
 
     private val _uiState = MutableStateFlow(
         VoiceNotesUiState(
+            isDarkTheme = storagePreferences.isDarkTheme,
             isStorageConfigured = storagePreferences.isStorageConfigured,
             showStorageConfigDialog = !storagePreferences.isStorageConfigured,
             storageBaseDirectoryDisplay = storagePreferences.getEffectiveBaseDirectory().absolutePath,
@@ -81,6 +84,17 @@ class VoiceNotesViewModel(application: Application) : AndroidViewModel(applicati
         )
     )
     val uiState: StateFlow<VoiceNotesUiState> = _uiState.asStateFlow()
+
+    fun toggleTheme() {
+        val newDark = !_uiState.value.isDarkTheme
+        storagePreferences.isDarkTheme = newDark
+        _uiState.value = _uiState.value.copy(isDarkTheme = newDark)
+    }
+
+    fun toggleFaceCam(active: Boolean? = null) {
+        val newActive = active ?: !_uiState.value.isFaceCamActive
+        _uiState.value = _uiState.value.copy(isFaceCamActive = newActive)
+    }
 
     // Player state
     val playerState: StateFlow<PlayerState> = audioPlayerManager.state

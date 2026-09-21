@@ -14,8 +14,13 @@ class StoragePreferences(private val context: Context) {
         private const val KEY_STORAGE_PATH = "selected_storage_path"
         private const val KEY_FOLDER_NAME = "storage_folder_name"
         private const val KEY_STORAGE_URI = "selected_storage_uri"
+        private const val KEY_IS_DARK_THEME = "is_dark_theme"
         private const val DEFAULT_FOLDER_NAME = "VoiceNotes"
     }
+
+    var isDarkTheme: Boolean
+        get() = prefs.getBoolean(KEY_IS_DARK_THEME, true)
+        set(value) = prefs.edit().putBoolean(KEY_IS_DARK_THEME, value).apply()
 
     var isStorageConfigured: Boolean
         get() = prefs.getBoolean(KEY_IS_CONFIGURED, false)

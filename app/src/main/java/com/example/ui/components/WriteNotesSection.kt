@@ -89,14 +89,14 @@ fun WriteNotesSection(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .padding(horizontal = 16.dp, vertical = 6.dp)
                 .clickable {
                     haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                     onCreateNewNote()
                 }
                 .testTag("create_new_markdown_note_card"),
             shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
             border = androidx.compose.foundation.BorderStroke(
                 1.dp,
                 MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
@@ -105,17 +105,18 @@ fun WriteNotesSection(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.weight(1f)
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(46.dp)
+                            .size(42.dp)
                             .clip(CircleShape)
                             .background(
                                 Brush.linearGradient(
@@ -131,33 +132,42 @@ fun WriteNotesSection(
                             imageVector = Icons.Default.EditNote,
                             contentDescription = null,
                             tint = Color.White,
-                            modifier = Modifier.size(26.dp)
+                            modifier = Modifier.size(24.dp)
                         )
                     }
 
                     Column {
                         Text(
                             text = "New Markdown Note",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "Full-screen editor • Live preview • Auto-save",
+                            text = "Markdown (.md) with auto-save",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
 
-                FilledTonalButton(
+                FilledIconButton(
                     onClick = {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         onCreateNewNote()
                     },
-                    shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    modifier = Modifier
+                        .size(40.dp)
+                        .testTag("create_markdown_note_button"),
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    )
                 ) {
-                    Text("+ Write", fontWeight = FontWeight.SemiBold)
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Create Markdown Note",
+                        modifier = Modifier.size(22.dp)
+                    )
                 }
             }
         }

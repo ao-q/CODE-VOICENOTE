@@ -9,6 +9,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.service.FloatingRecordingOverlayManager
 import com.example.service.RecordingStateManager
@@ -37,10 +38,12 @@ class MainActivity : ComponentActivity() {
         })
 
         setContent {
-            VoiceNotesTheme {
+            val vm: VoiceNotesViewModel = viewModel()
+            viewModel = vm
+            val uiState = vm.uiState.collectAsStateWithLifecycle().value
+
+            VoiceNotesTheme(darkTheme = uiState.isDarkTheme) {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    val vm: VoiceNotesViewModel = viewModel()
-                    viewModel = vm
                     MainVoiceNotesScreen(viewModel = vm)
                 }
             }
