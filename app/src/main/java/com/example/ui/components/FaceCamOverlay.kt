@@ -82,6 +82,17 @@ fun FaceCamOverlay(
 
     val currentSize = sizeMode.dpSize.dp
 
+    DisposableEffect(Unit) {
+        onDispose {
+            try {
+                val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+                if (cameraProviderFuture.isDone) {
+                    cameraProviderFuture.get().unbindAll()
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -131,18 +142,24 @@ fun FaceCamOverlay(
                             val preview = Preview.Builder().build().also {
                                 it.surfaceProvider = previewView.surfaceProvider
                             }
-                            val cameraSelector = if (useFrontCamera) {
-                                CameraSelector.DEFAULT_FRONT_CAMERA
-                            } else {
-                                CameraSelector.DEFAULT_BACK_CAMERA
+                            val hasFront = cameraProvider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)
+                            val hasBack = cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)
+                            val cameraSelector = when {
+                                useFrontCamera && hasFront -> CameraSelector.DEFAULT_FRONT_CAMERA
+                                !useFrontCamera && hasBack -> CameraSelector.DEFAULT_BACK_CAMERA
+                                hasFront -> CameraSelector.DEFAULT_FRONT_CAMERA
+                                hasBack -> CameraSelector.DEFAULT_BACK_CAMERA
+                                else -> null
                             }
 
-                            cameraProvider.unbindAll()
-                            cameraProvider.bindToLifecycle(
-                                lifecycleOwner,
-                                cameraSelector,
-                                preview
-                            )
+                            if (cameraSelector != null) {
+                                cameraProvider.unbindAll()
+                                cameraProvider.bindToLifecycle(
+                                    lifecycleOwner,
+                                    cameraSelector,
+                                    preview
+                                )
+                            }
                         } catch (e: Exception) {
                             e.printStackTrace()
                         }

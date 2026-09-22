@@ -12,8 +12,10 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -60,6 +62,8 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.VideocamOff
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.input.pointer.pointerInput
 import com.example.service.FloatingFaceCamOverlayManager
 import androidx.compose.material.icons.filled.Storage
@@ -78,6 +82,7 @@ import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -124,6 +129,7 @@ import com.example.ui.components.ActiveRecordingPane
 import com.example.ui.components.AudioPlayerBottomBar
 import com.example.ui.components.DeleteConfirmDialog
 import com.example.ui.components.EmptyCanvasView
+import com.example.ui.components.FaceCamOverlay
 import com.example.ui.components.FullScreenMarkdownEditor
 import com.example.ui.components.MoveNoteDialog
 import com.example.ui.components.NewFolderDialog
@@ -140,7 +146,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun MainVoiceNotesScreen(
     viewModel: VoiceNotesViewModel,
@@ -157,6 +163,7 @@ fun MainVoiceNotesScreen(
     val playerState by viewModel.playerState.collectAsStateWithLifecycle()
     val recordingState by viewModel.recordingSessionState.collectAsStateWithLifecycle()
     val detailMarkers by viewModel.detailMarkers.collectAsStateWithLifecycle()
+    val isFaceCamOverlayShowing by FloatingFaceCamOverlayManager.isShowingState.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
     var showOverlayPermissionDialog by remember { mutableStateOf(false) }
@@ -164,26 +171,24 @@ fun MainVoiceNotesScreen(
     var pendingInitialTitle by remember { mutableStateOf("") }
     var pendingInitialNotes by remember { mutableStateOf("") }
 
-    // Permission request handling
+    // Permission request handling - audio recording starts immediately upon grant
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
         val recordGranted = permissions[Manifest.permission.RECORD_AUDIO] == true
         if (recordGranted) {
-            if (!FloatingRecordingOverlayManager.canDrawOverlays(context)) {
-                showOverlayPermissionDialog = true
-            } else {
-                viewModel.startRecording(pendingInitialTitle, pendingInitialNotes)
-                pendingInitialTitle = ""
-                pendingInitialNotes = ""
-            }
+            viewModel.startRecording(pendingInitialTitle, pendingInitialNotes)
+            pendingInitialTitle = ""
+            pendingInitialNotes = ""
         }
     }
 
+    // Camera permission handling - launches FaceCam overlay immediately upon grant
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
+            viewModel.toggleFaceCam(true)
             FloatingFaceCamOverlayManager.show(context)
         }
     }
@@ -195,7 +200,13 @@ fun MainVoiceNotesScreen(
         ) == PackageManager.PERMISSION_GRANTED
 
         if (hasCamera) {
-            FloatingFaceCamOverlayManager.toggle(context)
+            val willBeActive = !isFaceCamOverlayShowing && !uiState.isFaceCamActive
+            viewModel.toggleFaceCam(willBeActive)
+            if (willBeActive) {
+                FloatingFaceCamOverlayManager.show(context)
+            } else {
+                FloatingFaceCamOverlayManager.hide()
+            }
         } else {
             cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
@@ -216,13 +227,9 @@ fun MainVoiceNotesScreen(
         }
 
         if (hasAudio) {
-            if (!FloatingRecordingOverlayManager.canDrawOverlays(context)) {
-                showOverlayPermissionDialog = true
-            } else {
-                viewModel.startRecording(pendingInitialTitle, pendingInitialNotes)
-                pendingInitialTitle = ""
-                pendingInitialNotes = ""
-            }
+            viewModel.startRecording(pendingInitialTitle, pendingInitialNotes)
+            pendingInitialTitle = ""
+            pendingInitialNotes = ""
         } else {
             permissionLauncher.launch(permissionsToAsk.toTypedArray())
         }
@@ -452,12 +459,15 @@ fun MainVoiceNotesScreen(
     val playingNote = voiceNotes.find { it.id == playerState.currentNoteId }
         ?: allNotes.find { it.id == playerState.currentNoteId }
 
-    Scaffold(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .statusBarsPadding()
-            .navigationBarsPadding(),
-        topBar = {
+            .navigationBarsPadding()
+    ) {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            topBar = {
             TopAppBar(
                 title = {
                     if (uiState.breadcrumbs.isEmpty()) {
@@ -547,36 +557,77 @@ fun MainVoiceNotesScreen(
             )
         },
         floatingActionButton = {
-            // Prominent Stock Android / Pixel Recorder FAB:
-            // Single tap: start audio recording
-            // Long press / hold: initiate system-wide FaceCam overlay
-            FloatingActionButton(
-                onClick = {},
-                containerColor = RecorderRed,
-                contentColor = Color.White,
-                shape = CircleShape,
-                elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 6.dp),
-                modifier = Modifier
-                    .size(64.dp)
-                    .pointerInput(Unit) {
-                        detectTapGestures(
-                            onTap = {
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Secondary Quick Action: Direct FaceCam Toggle
+                SmallFloatingActionButton(
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        initiateFaceCam()
+                    },
+                    containerColor = if (isFaceCamOverlayShowing || uiState.isFaceCamActive) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant
+                    },
+                    contentColor = if (isFaceCamOverlayShowing || uiState.isFaceCamActive) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    shape = CircleShape,
+                    modifier = Modifier
+                        .size(44.dp)
+                        .testTag("toggle_facecam_fab")
+                ) {
+                    Icon(
+                        imageVector = if (isFaceCamOverlayShowing || uiState.isFaceCamActive) {
+                            Icons.Default.Videocam
+                        } else {
+                            Icons.Default.VideocamOff
+                        },
+                        contentDescription = "Toggle FaceCam Camera",
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+
+                // Prominent Stock Android / Pixel Recorder FAB:
+                // Single tap: start audio recording immediately
+                // Long press / hold: toggle FaceCam overlay with haptic feedback
+                Surface(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .shadow(elevation = 6.dp, shape = CircleShape)
+                        .clip(CircleShape)
+                        .combinedClickable(
+                            onClick = {
                                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                 checkAndStartRecording()
                             },
-                            onLongPress = {
+                            onLongClick = {
                                 haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                 initiateFaceCam()
                             }
                         )
+                        .testTag("start_recording_fab"),
+                    shape = CircleShape,
+                    color = RecorderRed,
+                    contentColor = Color.White
+                ) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Mic,
+                            contentDescription = "Tap to Record, Hold for FaceCam",
+                            tint = Color.White,
+                            modifier = Modifier.size(32.dp)
+                        )
                     }
-                    .testTag("start_recording_fab")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Mic,
-                    contentDescription = "Tap to Record, Hold for FaceCam Overlay",
-                    modifier = Modifier.size(32.dp)
-                )
+                }
             }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -840,6 +891,17 @@ fun MainVoiceNotesScreen(
                     }
                 }
             }
+        }
+    }
+
+        // Floating FaceCam Selfie Overlay
+        if (isFaceCamOverlayShowing || uiState.isFaceCamActive) {
+            FaceCamOverlay(
+                onClose = {
+                    viewModel.toggleFaceCam(false)
+                    FloatingFaceCamOverlayManager.hide()
+                }
+            )
         }
     }
 }

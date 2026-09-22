@@ -66,11 +66,17 @@ object FloatingFaceCamOverlayManager {
         override val lifecycle: Lifecycle get() = registry
 
         fun markResumed() {
-            registry.currentState = Lifecycle.State.RESUMED
+            try {
+                registry.currentState = Lifecycle.State.CREATED
+                registry.currentState = Lifecycle.State.STARTED
+                registry.currentState = Lifecycle.State.RESUMED
+            } catch (_: Exception) {}
         }
 
         fun markDestroyed() {
-            registry.currentState = Lifecycle.State.DESTROYED
+            try {
+                registry.currentState = Lifecycle.State.DESTROYED
+            } catch (_: Exception) {}
         }
     }
 
@@ -89,12 +95,14 @@ object FloatingFaceCamOverlayManager {
     }
 
     /**
-     * Shows the system-wide FaceCam floating window.
+     * Shows the system-wide FaceCam floating window if overlay permission is present,
+     * and always activates the in-app FaceCam state.
      */
     fun show(context: Context) {
+        _isShowingState.value = true
         val appContext = context.applicationContext
         if (!canDrawOverlays(appContext)) {
-            FloatingRecordingOverlayManager.requestOverlayPermission(appContext)
+            // Overlay permission is not granted, but in-app Compose FaceCamOverlay is active!
             return
         }
 
@@ -247,14 +255,24 @@ object FloatingFaceCamOverlayManager {
                 val preview = Preview.Builder().build().also {
                     it.surfaceProvider = pView.surfaceProvider
                 }
-                val selector = if (isFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
+                val hasFront = cameraProvider?.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA) == true
+                val hasBack = cameraProvider?.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA) == true
+                val selector = when {
+                    isFrontCamera && hasFront -> CameraSelector.DEFAULT_FRONT_CAMERA
+                    !isFrontCamera && hasBack -> CameraSelector.DEFAULT_BACK_CAMERA
+                    hasFront -> CameraSelector.DEFAULT_FRONT_CAMERA
+                    hasBack -> CameraSelector.DEFAULT_BACK_CAMERA
+                    else -> null
+                }
 
-                cameraProvider?.unbindAll()
-                cameraProvider?.bindToLifecycle(
-                    overlayLifecycleOwner,
-                    selector,
-                    preview
-                )
+                if (selector != null) {
+                    cameraProvider?.unbindAll()
+                    cameraProvider?.bindToLifecycle(
+                        overlayLifecycleOwner,
+                        selector,
+                        preview
+                    )
+                }
             } catch (e: Exception) {
                 e.printStackTrace()
             }
