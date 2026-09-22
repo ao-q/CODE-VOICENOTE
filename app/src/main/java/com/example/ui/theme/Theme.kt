@@ -12,10 +12,10 @@ val CharcoalColorScheme = darkColorScheme(
     onPrimary = CharcoalOnPrimary,
     primaryContainer = CharcoalPrimaryContainer,
     onPrimaryContainer = CharcoalOnPrimaryContainer,
-    secondary = Color(0xFFE7BDB8),
-    onSecondary = Color(0xFF442927),
-    secondaryContainer = Color(0xFF32343D),
-    onSecondaryContainer = Color(0xFFFFDAD6),
+    secondary = Color(0xFF60A5FA),
+    onSecondary = Color(0xFF0F172A),
+    secondaryContainer = Color(0xFF1E293B),
+    onSecondaryContainer = Color(0xFFDBEAFE),
     tertiary = TimestampFlagColor,
     background = CharcoalBackground,
     onBackground = CharcoalOnSurface,
@@ -25,16 +25,16 @@ val CharcoalColorScheme = darkColorScheme(
     onSurfaceVariant = CharcoalOnSurfaceVariant
 )
 
-// Sun Theme (Warm Amber / Sepia Paper)
+// Sun Theme (Clean Light / Crisp Slate Blue)
 val WarmColorScheme = lightColorScheme(
     primary = WarmPrimary,
     onPrimary = WarmOnPrimary,
     primaryContainer = WarmPrimaryContainer,
     onPrimaryContainer = WarmOnPrimaryContainer,
-    secondary = Color(0xFF8D5B4C),
+    secondary = Color(0xFF2563EB),
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFFFDBCF),
-    onSecondaryContainer = Color(0xFF380D03),
+    secondaryContainer = Color(0xFFDBEAFE),
+    onSecondaryContainer = Color(0xFF1E3A8A),
     tertiary = TimestampFlagColor,
     background = WarmBackground,
     onBackground = WarmOnSurface,

@@ -22,5 +22,6 @@ data class FolderEntity(
     val id: Long = 0,
     val parentId: Long? = null, // null means root level
     val name: String,
+    val isPinned: Boolean = false,
     val createdAt: Long = System.currentTimeMillis()
 )

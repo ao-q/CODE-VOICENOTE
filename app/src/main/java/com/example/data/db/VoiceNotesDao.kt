@@ -35,6 +35,12 @@ interface VoiceNotesDao {
     @Query("DELETE FROM folders WHERE id = :id")
     suspend fun deleteFolderById(id: Long)
 
+    @Query("UPDATE folders SET isPinned = :isPinned WHERE id = :id")
+    suspend fun updateFolderPinned(id: Long, isPinned: Boolean)
+
+    @Query("SELECT * FROM folders WHERE isPinned = 1 ORDER BY name ASC")
+    fun getPinnedFolders(): Flow<List<FolderEntity>>
+
     // Voice Notes
     @Query("SELECT * FROM voice_notes ORDER BY createdAt DESC")
     fun getAllVoiceNotes(): Flow<List<VoiceNoteEntity>>

@@ -98,12 +98,16 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -160,16 +164,37 @@ fun MainVoiceNotesScreen(
     val allFolders by viewModel.allFolders.collectAsStateWithLifecycle()
     val allNotes by viewModel.allNotes.collectAsStateWithLifecycle()
     val pinnedNotes by viewModel.pinnedNotes.collectAsStateWithLifecycle()
+    val pinnedFolders by viewModel.pinnedFolders.collectAsStateWithLifecycle()
     val playerState by viewModel.playerState.collectAsStateWithLifecycle()
     val recordingState by viewModel.recordingSessionState.collectAsStateWithLifecycle()
     val detailMarkers by viewModel.detailMarkers.collectAsStateWithLifecycle()
     val isFaceCamOverlayShowing by FloatingFaceCamOverlayManager.isShowingState.collectAsStateWithLifecycle()
+    val isSystemOverlayActive by FloatingFaceCamOverlayManager.isSystemOverlayActive.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
     var showOverlayPermissionDialog by remember { mutableStateOf(false) }
     var isSearchVisible by remember { mutableStateOf(false) }
     var pendingInitialTitle by remember { mutableStateOf("") }
     var pendingInitialNotes by remember { mutableStateOf("") }
+
+    // Resume listener: if user returns from Android Settings after enabling "Display over other apps", auto-promote FaceCam to floating service
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                if ((isFaceCamOverlayShowing || uiState.isFaceCamActive) &&
+                    FloatingFaceCamOverlayManager.canDrawOverlays(context) &&
+                    !FloatingFaceCamOverlayManager.isSystemOverlay()
+                ) {
+                    FloatingFaceCamOverlayManager.show(context)
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     // Permission request handling - audio recording starts immediately upon grant
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -188,8 +213,12 @@ fun MainVoiceNotesScreen(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
-            viewModel.toggleFaceCam(true)
-            FloatingFaceCamOverlayManager.show(context)
+            if (!FloatingFaceCamOverlayManager.canDrawOverlays(context)) {
+                showOverlayPermissionDialog = true
+            } else {
+                viewModel.toggleFaceCam(true)
+                FloatingFaceCamOverlayManager.show(context)
+            }
         }
     }
 
@@ -201,11 +230,16 @@ fun MainVoiceNotesScreen(
 
         if (hasCamera) {
             val willBeActive = !isFaceCamOverlayShowing && !uiState.isFaceCamActive
-            viewModel.toggleFaceCam(willBeActive)
             if (willBeActive) {
-                FloatingFaceCamOverlayManager.show(context)
+                if (!FloatingFaceCamOverlayManager.canDrawOverlays(context)) {
+                    showOverlayPermissionDialog = true
+                } else {
+                    viewModel.toggleFaceCam(true)
+                    FloatingFaceCamOverlayManager.show(context)
+                }
             } else {
-                FloatingFaceCamOverlayManager.hide()
+                viewModel.toggleFaceCam(false)
+                FloatingFaceCamOverlayManager.hide(context)
             }
         } else {
             cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
@@ -784,11 +818,14 @@ fun MainVoiceNotesScreen(
                     MainTab.WRITE -> {
                         WriteNotesSection(
                             notes = allNotes,
+                            folders = allFolders,
+                            pinnedFolders = pinnedFolders,
                             playerState = playerState,
                             onCreateNewNote = { viewModel.openFullScreenEditorForNew() },
                             onStartRecording = { checkAndStartRecording() },
                             onOpenNoteInEditor = { note -> viewModel.openFullScreenEditorForNote(note) },
                             onTogglePin = { note -> viewModel.togglePinNote(note) },
+                            onTogglePinFolder = { folder -> viewModel.togglePinFolder(folder) },
                             onPlayToggle = { note -> viewModel.togglePlayNote(note) },
                             onRename = { note -> viewModel.openRenameNoteDialog(note) },
                             onMove = { note -> viewModel.openMoveNoteDialog(note) },
@@ -802,7 +839,7 @@ fun MainVoiceNotesScreen(
                             modifier = Modifier.fillMaxSize(),
                             contentPadding = PaddingValues(bottom = 90.dp)
                         ) {
-                            // Section: Nested Folders (Folder in folder ability) - only on Home tab
+                            // Section: Folders on Home tab
                             if (currentTab == MainTab.HOME && folders.isNotEmpty() && uiState.searchQuery.isBlank()) {
                                 item {
                                     LazyRow(
@@ -815,7 +852,30 @@ fun MainVoiceNotesScreen(
                                                 folder = folder,
                                                 onClick = { viewModel.navigateToFolder(folder.id) },
                                                 onRename = { viewModel.openRenameFolderDialog(folder) },
-                                                onDelete = { viewModel.confirmDeleteFolder(folder) }
+                                                onDelete = { viewModel.confirmDeleteFolder(folder) },
+                                                onTogglePin = { viewModel.togglePinFolder(folder) }
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                }
+                            }
+
+                            // Section: Pinned Folders on Pins tab
+                            if (currentTab == MainTab.PINS && pinnedFolders.isNotEmpty() && uiState.searchQuery.isBlank()) {
+                                item {
+                                    LazyRow(
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        items(pinnedFolders) { folder ->
+                                            FolderChipCard(
+                                                folder = folder,
+                                                onClick = { viewModel.navigateToFolder(folder.id) },
+                                                onRename = { viewModel.openRenameFolderDialog(folder) },
+                                                onDelete = { viewModel.confirmDeleteFolder(folder) },
+                                                onTogglePin = { viewModel.togglePinFolder(folder) }
                                             )
                                         }
                                     }
@@ -834,9 +894,9 @@ fun MainVoiceNotesScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         val headerTitle = when {
-                                            uiState.searchQuery.isNotBlank() -> "Search Results"
-                                            currentTab == MainTab.PINS -> "Pinned Recordings & Notes (${voiceNotes.size})"
-                                            else -> "Voice Notes (${voiceNotes.size})"
+                                            uiState.searchQuery.isNotBlank() -> "Results"
+                                            currentTab == MainTab.PINS -> "Pinned (${voiceNotes.size})"
+                                            else -> "Notes (${voiceNotes.size})"
                                         }
                                         Text(
                                             text = headerTitle,
@@ -853,11 +913,7 @@ fun MainVoiceNotesScreen(
                                     if (uiState.searchQuery.isNotBlank()) {
                                         EmptyNotesView(isSearching = true)
                                     } else {
-                                        val emptyMsg = if (currentTab == MainTab.PINS) {
-                                            "No pinned recordings yet.\nTap the pin icon on any recording or markdown file to access it here."
-                                        } else {
-                                            "The canvas is empty."
-                                        }
+                                        val emptyMsg = if (currentTab == MainTab.PINS) "No pinned notes" else "No notes yet"
                                         EmptyCanvasView(
                                             message = emptyMsg,
                                             modifier = Modifier
@@ -894,12 +950,63 @@ fun MainVoiceNotesScreen(
         }
     }
 
-        // Floating FaceCam Selfie Overlay
-        if (isFaceCamOverlayShowing || uiState.isFaceCamActive) {
+        // Floating FaceCam Selfie Overlay (renders in-app only if system-wide WindowManager overlay is not active)
+        if ((isFaceCamOverlayShowing || uiState.isFaceCamActive) && !isSystemOverlayActive) {
             FaceCamOverlay(
                 onClose = {
                     viewModel.toggleFaceCam(false)
-                    FloatingFaceCamOverlayManager.hide()
+                    FloatingFaceCamOverlayManager.hide(context)
+                }
+            )
+        }
+
+        if (showOverlayPermissionDialog) {
+            AlertDialog(
+                onDismissRequest = {
+                    showOverlayPermissionDialog = false
+                    viewModel.toggleFaceCam(true)
+                    FloatingFaceCamOverlayManager.show(context)
+                },
+                icon = {
+                    Icon(
+                        imageVector = Icons.Default.Layers,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                },
+                title = {
+                    Text(
+                        text = "Floating Camera Overlay",
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                },
+                text = {
+                    Text(
+                        text = "To allow FaceCam to float outside the app and stay visible on your home screen or over other apps while recording, enable 'Display over other apps' in Android settings.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showOverlayPermissionDialog = false
+                            viewModel.toggleFaceCam(true)
+                            FloatingFaceCamOverlayManager.requestOverlayPermission(context)
+                        }
+                    ) {
+                        Text("Enable in Settings")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            showOverlayPermissionDialog = false
+                            viewModel.toggleFaceCam(true)
+                            FloatingFaceCamOverlayManager.show(context)
+                        }
+                    ) {
+                        Text("Use In-App Only")
+                    }
                 }
             )
         }
@@ -953,7 +1060,8 @@ fun FolderChipCard(
     folder: FolderEntity,
     onClick: () -> Unit,
     onRename: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onTogglePin: () -> Unit = {}
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
@@ -974,14 +1082,23 @@ fun FolderChipCard(
                 Icons.Default.Folder,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(22.dp)
+                modifier = Modifier.size(20.dp)
             )
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(6.dp))
             Text(
                 text = folder.name,
                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                 color = MaterialTheme.colorScheme.onSurface
             )
+            if (folder.isPinned) {
+                Spacer(modifier = Modifier.width(4.dp))
+                Icon(
+                    Icons.Filled.PushPin,
+                    contentDescription = "Pinned",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(13.dp)
+                )
+            }
 
             Box {
                 IconButton(
@@ -997,7 +1114,20 @@ fun FolderChipCard(
 
                 DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                     DropdownMenuItem(
-                        text = { Text("Rename Folder") },
+                        text = { Text(if (folder.isPinned) "Unpin" else "Pin") },
+                        leadingIcon = {
+                            Icon(
+                                if (folder.isPinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
+                                contentDescription = null
+                            )
+                        },
+                        onClick = {
+                            showMenu = false
+                            onTogglePin()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Rename") },
                         leadingIcon = { Icon(Icons.Default.DriveFileRenameOutline, contentDescription = null) },
                         onClick = {
                             showMenu = false
@@ -1270,7 +1400,7 @@ fun VoiceNotesTitleWithRedDot() {
             modifier = Modifier
                 .size(7.dp)
                 .clip(CircleShape)
-                .background(Color(0xFFE11D48))
+                .background(MaterialTheme.colorScheme.primary)
         )
     }
 }
@@ -1304,19 +1434,9 @@ fun EmptyNotesView(
         Spacer(modifier = Modifier.height(18.dp))
 
         Text(
-            text = if (isSearching) "No matching notes found" else "No voice notes yet",
+            text = if (isSearching) "No results" else "No notes",
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
             color = MaterialTheme.colorScheme.onSurface
         )
-
-        if (isSearching) {
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = "Try searching for a different keyword or check spelling.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                lineHeight = 18.sp
-            )
-        }
     }
 }

@@ -10,7 +10,7 @@ import com.example.data.model.VoiceNoteEntity
 
 @Database(
     entities = [FolderEntity::class, VoiceNoteEntity::class, TimestampMarkerEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

@@ -64,6 +64,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import com.example.service.FloatingFaceCamOverlayManager
 import com.example.service.FloatingRecordingOverlayManager
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -78,6 +79,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -120,12 +122,30 @@ fun ActiveRecordingPane(
     val title by titleFlow.collectAsState()
     val notes by notesFlow.collectAsState()
     val isFaceCamActive by FloatingFaceCamOverlayManager.isShowingState.collectAsState()
+    val isSystemOverlayActive by FloatingFaceCamOverlayManager.isSystemOverlayActive.collectAsState()
+    var showOverlayPermissionPrompt by remember { mutableStateOf(false) }
 
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         if (isGranted) {
-            FloatingFaceCamOverlayManager.show(context)
+            if (!FloatingFaceCamOverlayManager.canDrawOverlays(context)) {
+                showOverlayPermissionPrompt = true
+            } else {
+                FloatingFaceCamOverlayManager.show(context)
+            }
+        }
+    }
+
+    val toggleFaceCamAction = {
+        if (isFaceCamActive) {
+            FloatingFaceCamOverlayManager.hide(context)
+        } else {
+            if (!FloatingFaceCamOverlayManager.canDrawOverlays(context)) {
+                showOverlayPermissionPrompt = true
+            } else {
+                FloatingFaceCamOverlayManager.show(context)
+            }
         }
     }
 
@@ -167,7 +187,7 @@ fun ActiveRecordingPane(
                             sessionState = sessionState,
                             pulseScale = pulseScale,
                             isFaceCamActive = isFaceCamActive,
-                            onToggleFaceCam = { FloatingFaceCamOverlayManager.toggle(context) },
+                            onToggleFaceCam = toggleFaceCamAction,
                             onLaunchCameraPermission = { cameraPermissionLauncher.launch(Manifest.permission.CAMERA) },
                             onPause = onPause,
                             onResume = onResume,
@@ -202,7 +222,7 @@ fun ActiveRecordingPane(
                         sessionState = sessionState,
                         pulseScale = pulseScale,
                         isFaceCamActive = isFaceCamActive,
-                        onToggleFaceCam = { FloatingFaceCamOverlayManager.toggle(context) },
+                        onToggleFaceCam = toggleFaceCamAction,
                         onLaunchCameraPermission = { cameraPermissionLauncher.launch(Manifest.permission.CAMERA) },
                         onPause = onPause,
                         onResume = onResume,
@@ -227,10 +247,58 @@ fun ActiveRecordingPane(
                 }
             }
 
-            // Floating FaceCam Selfie Overlay (Draggable live front camera visualization for native screen recording)
-            if (isFaceCamActive) {
+            // Floating FaceCam Selfie Overlay (renders in-app only if system-wide WindowManager overlay is not active)
+            if (isFaceCamActive && !isSystemOverlayActive) {
                 FaceCamOverlay(
-                    onClose = { FloatingFaceCamOverlayManager.hide() }
+                    onClose = { FloatingFaceCamOverlayManager.hide(context) }
+                )
+            }
+
+            if (showOverlayPermissionPrompt) {
+                AlertDialog(
+                    onDismissRequest = {
+                        showOverlayPermissionPrompt = false
+                        FloatingFaceCamOverlayManager.show(context)
+                    },
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Default.Layers,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    },
+                    title = {
+                        Text(
+                            text = "Floating Camera Overlay",
+                            style = MaterialTheme.typography.titleLarge
+                        )
+                    },
+                    text = {
+                        Text(
+                            text = "To keep FaceCam floating outside the app and over other apps while recording, enable 'Display over other apps' in Android settings.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                showOverlayPermissionPrompt = false
+                                FloatingFaceCamOverlayManager.requestOverlayPermission(context)
+                            }
+                        ) {
+                            Text("Enable in Settings")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = {
+                                showOverlayPermissionPrompt = false
+                                FloatingFaceCamOverlayManager.show(context)
+                            }
+                        ) {
+                            Text("Use In-App Only")
+                        }
+                    }
                 )
             }
         }

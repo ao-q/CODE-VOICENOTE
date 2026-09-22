@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -18,7 +19,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -27,31 +27,31 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.model.FolderEntity
 import com.example.data.model.VoiceNoteEntity
 import com.example.player.PlayerState
-import com.example.ui.theme.RecorderRed
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 /**
- * Dedicated Write Notes Section.
- *
- * Allows users to:
- * - Access all written markdown files (from recordings AND standalone written notes).
- * - Filter by source (All, From Recordings, Written Only).
- * - Search within markdown content and titles.
- * - Create new markdown notes via the full-screen text editor.
- * - Play audio from voice note recordings right from the card.
+ * Minimalist Write Notes Section.
+ * - Icon-only quick actions for recording and writing.
+ * - Folders visible and pinnable.
+ * - Emoji-only file sorter (📁, 🎙️, 📝).
+ * - Ultra-minimal text counts.
  */
 @Composable
 fun WriteNotesSection(
     notes: List<VoiceNoteEntity>,
+    folders: List<FolderEntity> = emptyList(),
+    pinnedFolders: List<FolderEntity> = emptyList(),
     playerState: PlayerState,
     onCreateNewNote: () -> Unit,
     onStartRecording: () -> Unit,
     onOpenNoteInEditor: (VoiceNoteEntity) -> Unit,
     onTogglePin: (VoiceNoteEntity) -> Unit,
+    onTogglePinFolder: (FolderEntity) -> Unit = {},
     onPlayToggle: (VoiceNoteEntity) -> Unit,
     onRename: (VoiceNoteEntity) -> Unit,
     onMove: (VoiceNoteEntity) -> Unit,
@@ -60,11 +60,13 @@ fun WriteNotesSection(
 ) {
     val haptics = LocalHapticFeedback.current
 
-    var selectedFilterIndex by remember { mutableStateOf(0) } // 0 = All, 1 = Recordings, 2 = Written
+    var selectedFilterIndex by remember { mutableStateOf(0) } // 0 = All, 1 = 🎙️, 2 = 📝
+    var selectedFolderId by remember { mutableStateOf<Long?>(null) }
     var searchQuery by remember { mutableStateOf("") }
 
-    val filteredNotes = remember(notes, selectedFilterIndex, searchQuery) {
+    val filteredNotes = remember(notes, selectedFilterIndex, selectedFolderId, searchQuery) {
         notes.filter { note ->
+            val matchesFolder = if (selectedFolderId != null) note.folderId == selectedFolderId else true
             val matchesFilter = when (selectedFilterIndex) {
                 1 -> note.audioFilePath.isNotBlank()
                 2 -> note.audioFilePath.isBlank()
@@ -74,199 +76,183 @@ fun WriteNotesSection(
                 note.title.contains(searchQuery, ignoreCase = true) ||
                 note.noteContent.contains(searchQuery, ignoreCase = true)
             }
-            matchesFilter && matchesSearch
+            matchesFolder && matchesFilter && matchesSearch
         }
     }
 
-    val recordingsCount = remember(notes) { notes.count { it.audioFilePath.isNotBlank() } }
-    val writtenCount = remember(notes) { notes.count { it.audioFilePath.isBlank() } }
+    val recordingsCount = remember(notes, selectedFolderId) {
+        notes.count { (selectedFolderId == null || it.folderId == selectedFolderId) && it.audioFilePath.isNotBlank() }
+    }
+    val writtenCount = remember(notes, selectedFolderId) {
+        notes.count { (selectedFolderId == null || it.folderId == selectedFolderId) && it.audioFilePath.isBlank() }
+    }
+    val totalCount = remember(notes, selectedFolderId) {
+        notes.count { selectedFolderId == null || it.folderId == selectedFolderId }
+    }
+
+    // Combine pinned and all folders (pinned first, no duplicates)
+    val displayFolders = remember(folders, pinnedFolders) {
+        val pinnedIds = pinnedFolders.map { it.id }.toSet()
+        val rest = folders.filter { it.id !in pinnedIds }
+        pinnedFolders + rest
+    }
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .testTag("write_notes_section")
     ) {
-        // Top Quick Actions: "Record Voice Note" (Mic) & "New Markdown Note"
+        // Quick Action Bar: ONLY Icons (No text for record note and write note) + Search
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Card 1: Record Voice Note directly
-            Surface(
+            // Icon-only Record Action Button (Dark Blue gradient)
+            FilledIconButton(
+                onClick = {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onStartRecording()
+                },
                 modifier = Modifier
-                    .weight(1f)
-                    .clickable {
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onStartRecording()
-                    }
+                    .size(46.dp)
                     .testTag("write_notes_record_voice_card"),
-                shape = RoundedCornerShape(18.dp),
-                color = RecorderRed.copy(alpha = 0.08f),
-                border = androidx.compose.foundation.BorderStroke(
-                    1.2.dp,
-                    RecorderRed.copy(alpha = 0.4f)
+                shape = RoundedCornerShape(14.dp),
+                colors = IconButtonDefaults.filledIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary
                 )
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(
-                                Brush.linearGradient(
-                                    colors = listOf(
-                                        RecorderRed,
-                                        Color(0xFFE53935)
-                                    )
-                                )
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Mic,
-                            contentDescription = "Record Voice Note",
-                            tint = Color.White,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Record Note",
-                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1
-                        )
-                        Text(
-                            text = ".mp3 audio & .md note",
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                            color = RecorderRed,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
+                Icon(
+                    imageVector = Icons.Default.Mic,
+                    contentDescription = "Record",
+                    modifier = Modifier.size(24.dp)
+                )
             }
 
-            // Card 2: Write Markdown Note
-            Surface(
+            // Icon-only Write Note Action Button
+            FilledTonalIconButton(
+                onClick = {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onCreateNewNote()
+                },
                 modifier = Modifier
-                    .weight(1f)
-                    .clickable {
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onCreateNewNote()
-                    }
+                    .size(46.dp)
                     .testTag("create_new_markdown_note_card"),
-                shape = RoundedCornerShape(18.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                border = androidx.compose.foundation.BorderStroke(
-                    1.2.dp,
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
+                shape = RoundedCornerShape(14.dp),
+                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
                 )
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(
-                                Brush.linearGradient(
-                                    colors = listOf(
-                                        MaterialTheme.colorScheme.primary,
-                                        MaterialTheme.colorScheme.secondary
-                                    )
-                                )
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.EditNote,
-                            contentDescription = "New Markdown Note",
-                            tint = Color.White,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
+                Icon(
+                    imageVector = Icons.Default.EditNote,
+                    contentDescription = "Write",
+                    modifier = Modifier.size(26.dp)
+                )
+            }
 
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Write Note",
-                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1
-                        )
-                        Text(
-                            text = "Markdown text file",
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+            // Search input (Minimalist)
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = { Text("Search...", fontSize = 13.sp) },
+                leadingIcon = {
+                    Icon(
+                        Icons.Default.Search,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                },
+                trailingIcon = {
+                    if (searchQuery.isNotBlank()) {
+                        IconButton(onClick = { searchQuery = "" }, modifier = Modifier.size(28.dp)) {
+                            Icon(Icons.Default.Close, contentDescription = "Clear", modifier = Modifier.size(16.dp))
+                        }
                     }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .testTag("write_notes_search_field"),
+                colors = OutlinedTextFieldDefaults.colors(
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                )
+            )
+        }
+
+        // Visible Folders row (Pinned folders highlighted with 📌)
+        if (displayFolders.isNotEmpty()) {
+            LazyRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp)
+            ) {
+                items(displayFolders, key = { it.id }) { folder ->
+                    val isSelected = selectedFolderId == folder.id
+                    val isPinned = folder.isPinned
+
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            selectedFolderId = if (isSelected) null else folder.id
+                        },
+                        label = {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(folder.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 12.sp)
+                                if (isPinned) {
+                                    Text("📌", fontSize = 10.sp)
+                                }
+                            }
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = if (isSelected) Icons.Default.FolderOpen else Icons.Default.Folder,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        trailingIcon = {
+                            IconButton(
+                                onClick = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onTogglePinFolder(folder)
+                                },
+                                modifier = Modifier.size(20.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isPinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
+                                    contentDescription = if (isPinned) "Unpin" else "Pin",
+                                    tint = if (isPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                    modifier = Modifier.size(12.dp)
+                                )
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp)
+                    )
                 }
             }
         }
 
-        // Search in Markdown notes
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = { searchQuery = it },
-            placeholder = { Text("Search markdown files & content...") },
-            leadingIcon = {
-                Icon(
-                    Icons.Default.Search,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            },
-            trailingIcon = {
-                if (searchQuery.isNotBlank()) {
-                    IconButton(onClick = { searchQuery = "" }) {
-                        Icon(Icons.Default.Close, contentDescription = "Clear search")
-                    }
-                } else {
-                    IconButton(
-                        onClick = {
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onStartRecording()
-                        },
-                        modifier = Modifier.testTag("write_notes_search_mic_button")
-                    ) {
-                        Icon(
-                            Icons.Default.Mic,
-                            contentDescription = "Record Voice Note (Audio + Notes in same folder)",
-                            tint = RecorderRed
-                        )
-                    }
-                }
-            },
-            singleLine = true,
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 4.dp)
-                .testTag("write_notes_search_field")
-        )
-
-        // Filter chips: All, From Recordings, Written Only
+        // File sorter chips: ONLY EMOJI (No "Recordings" or "Written" words)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             FilterChip(
                 selected = selectedFilterIndex == 0,
@@ -274,7 +260,7 @@ fun WriteNotesSection(
                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     selectedFilterIndex = 0
                 },
-                label = { Text("All (${notes.size})") },
+                label = { Text("📁 $totalCount", fontWeight = FontWeight.SemiBold, fontSize = 12.sp) },
                 shape = RoundedCornerShape(12.dp)
             )
 
@@ -284,7 +270,7 @@ fun WriteNotesSection(
                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     selectedFilterIndex = 1
                 },
-                label = { Text("🎙️ Recordings ($recordingsCount)") },
+                label = { Text("🎙️ $recordingsCount", fontWeight = FontWeight.SemiBold, fontSize = 12.sp) },
                 shape = RoundedCornerShape(12.dp)
             )
 
@@ -294,12 +280,24 @@ fun WriteNotesSection(
                     haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     selectedFilterIndex = 2
                 },
-                label = { Text("📝 Written ($writtenCount)") },
+                label = { Text("📝 $writtenCount", fontWeight = FontWeight.SemiBold, fontSize = 12.sp) },
                 shape = RoundedCornerShape(12.dp)
             )
+
+            if (selectedFolderId != null) {
+                val currentFolderName = displayFolders.find { it.id == selectedFolderId }?.name ?: ""
+                AssistChip(
+                    onClick = { selectedFolderId = null },
+                    label = { Text(currentFolderName, fontSize = 11.sp, maxLines = 1) },
+                    trailingIcon = {
+                        Icon(Icons.Default.Close, contentDescription = "Clear", modifier = Modifier.size(12.dp))
+                    },
+                    shape = RoundedCornerShape(12.dp)
+                )
+            }
         }
 
-        // List of Markdown Notes
+        // List of Notes
         if (filteredNotes.isEmpty()) {
             Box(
                 modifier = Modifier
@@ -310,58 +308,19 @@ fun WriteNotesSection(
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Description,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                        modifier = Modifier.size(56.dp)
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                        modifier = Modifier.size(48.dp)
                     )
                     Text(
-                        text = if (searchQuery.isNotBlank()) "No matching markdown notes found" else "No markdown files here yet",
-                        style = MaterialTheme.typography.titleMedium,
+                        text = if (searchQuery.isNotBlank()) "No results" else "Empty",
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Text(
-                        text = "Written notes and voice recording notes are stored as .md files and accessible here.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                    )
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier.padding(top = 8.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = {
-                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onStartRecording()
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = RecorderRed
-                            ),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, RecorderRed.copy(alpha = 0.5f)),
-                            modifier = Modifier.testTag("empty_state_record_button")
-                        ) {
-                            Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Record Voice")
-                        }
-
-                        Button(
-                            onClick = {
-                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onCreateNewNote()
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.testTag("empty_state_write_button")
-                        ) {
-                            Icon(Icons.Default.EditNote, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Write Note")
-                        }
-                    }
                 }
             }
         } else {
@@ -369,8 +328,8 @@ fun WriteNotesSection(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(filteredNotes, key = { it.id }) { note ->
                     MarkdownNoteCard(
@@ -413,7 +372,7 @@ fun MarkdownNoteCard(
     }
 
     val dateFormatted = remember(note.createdAt) {
-        val sdf = SimpleDateFormat("MMM dd, yyyy • h:mm a", Locale.getDefault())
+        val sdf = SimpleDateFormat("MMM dd • h:mm a", Locale.getDefault())
         sdf.format(Date(note.createdAt))
     }
 
@@ -425,131 +384,72 @@ fun MarkdownNoteCard(
                 onOpen()
             }
             .testTag("markdown_note_card_${note.id}"),
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
         border = androidx.compose.foundation.BorderStroke(
             1.dp,
-            if (note.isPinned) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
-            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+            if (note.isPinned) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
         )
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            // Header: Type badge, Pin, Menu
+            // Header: Emoji badge + Pin + Options
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // Origin Pill
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    if (hasAudio) {
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = RecorderRed.copy(alpha = 0.12f)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Mic,
-                                    contentDescription = null,
-                                    tint = RecorderRed,
-                                    modifier = Modifier.size(13.dp)
-                                )
-                                Text(
-                                    text = "Recording Note",
-                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                                    color = RecorderRed
-                                )
-                            }
-                        }
-                    } else {
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Description,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(13.dp)
-                                )
-                                Text(
-                                    text = "Written Note",
-                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
-                    }
+                    Text(
+                        text = if (hasAudio) "🎙️" else "📝",
+                        fontSize = 14.sp
+                    )
 
                     if (note.isPinned) {
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.secondaryContainer
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(2.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.PushPin,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(12.dp)
-                                )
-                                Text(
-                                    text = "Pinned",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
+                        Text("📌", fontSize = 12.sp)
                     }
+
+                    Text(
+                        text = dateFormatted,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
 
-                // Action buttons: Pin & Menu
+                // Pin & Menu
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(
                         onClick = {
                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                             onTogglePin()
                         },
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(28.dp)
                     ) {
                         Icon(
                             imageVector = if (note.isPinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
-                            contentDescription = if (note.isPinned) "Unpin Note" else "Pin Note",
-                            tint = if (note.isPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
+                            contentDescription = if (note.isPinned) "Unpin" else "Pin",
+                            tint = if (note.isPinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.size(16.dp)
                         )
                     }
 
                     Box {
                         IconButton(
                             onClick = { showMenu = true },
-                            modifier = Modifier.size(32.dp)
+                            modifier = Modifier.size(28.dp)
                         ) {
                             Icon(
                                 Icons.Default.MoreVert,
-                                contentDescription = "Menu",
-                                modifier = Modifier.size(18.dp)
+                                contentDescription = "Options",
+                                modifier = Modifier.size(16.dp)
                             )
                         }
 
@@ -558,7 +458,7 @@ fun MarkdownNoteCard(
                             onDismissRequest = { showMenu = false }
                         ) {
                             DropdownMenuItem(
-                                text = { Text(if (note.isPinned) "Unpin Note" else "Pin Note") },
+                                text = { Text(if (note.isPinned) "Unpin" else "Pin") },
                                 leadingIcon = {
                                     Icon(
                                         if (note.isPinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
@@ -579,13 +479,14 @@ fun MarkdownNoteCard(
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("Move to Folder") },
+                                text = { Text("Move") },
                                 leadingIcon = { Icon(Icons.Default.DriveFileMove, contentDescription = null) },
                                 onClick = {
                                     showMenu = false
                                     onMove()
                                 }
                             )
+                            HorizontalDivider()
                             DropdownMenuItem(
                                 text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
                                 leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
@@ -602,73 +503,54 @@ fun MarkdownNoteCard(
             // Note Title
             Text(
                 text = note.title,
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
 
-            // Markdown Snippet Preview
-            val previewSnippet = if (note.noteContent.isBlank()) {
-                "Empty markdown note. Tap to write content..."
-            } else {
-                note.noteContent.trim().take(120).replace("\n", " ")
+            // Content preview (first 2 lines)
+            if (note.noteContent.isNotBlank()) {
+                Text(
+                    text = note.noteContent.trim(),
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 16.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
 
-            Text(
-                text = previewSnippet,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                lineHeight = 18.sp
-            )
-
-            // Bottom row: Audio playback (if available), word count, date
+            // Footer info + audio mini player
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    if (hasAudio) {
-                        IconButton(
-                            onClick = {
-                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onPlayToggle()
-                            },
-                            modifier = Modifier
-                                .size(32.dp)
-                                .clip(CircleShape)
-                                .background(RecorderRed)
-                        ) {
-                            Icon(
-                                imageVector = if (isPlayingThis) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (isPlayingThis) "Pause" else "Play",
-                                tint = Color.White,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-
-                        if (isPlayingThis) {
-                            PlayingEqualizerBars(isPlaying = true)
-                        }
-                    }
-
-                    Text(
-                        text = "$wordCount words • .md",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                    )
-                }
-
                 Text(
-                    text = dateFormatted,
-                    style = MaterialTheme.typography.labelSmall,
+                    text = "$wordCount words",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                 )
+
+                if (hasAudio) {
+                    FilledTonalIconButton(
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onPlayToggle()
+                        },
+                        modifier = Modifier.size(32.dp),
+                        colors = IconButtonDefaults.filledTonalIconButtonColors(
+                            containerColor = if (isPlayingThis) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = if (isPlayingThis) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary
+                        )
+                    ) {
+                        Icon(
+                            imageVector = if (isPlayingThis) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (isPlayingThis) "Pause" else "Play",
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
             }
         }
     }

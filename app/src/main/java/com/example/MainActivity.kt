@@ -11,6 +11,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.service.FloatingFaceCamOverlayManager
+import com.example.service.FloatingFaceCamService
 import com.example.service.FloatingRecordingOverlayManager
 import com.example.service.RecordingStateManager
 import com.example.ui.VoiceNotesViewModel
@@ -75,6 +77,10 @@ class MainActivity : ComponentActivity() {
         // When leaving app during active recording, show floating recording controls over other apps
         if (RecordingStateManager.state.value.isRecording) {
             FloatingRecordingOverlayManager.show(this)
+        }
+        // When leaving app with FaceCam active, ensure foreground service keeps camera streaming over other apps
+        if (FloatingFaceCamOverlayManager.isShowing() && FloatingFaceCamOverlayManager.canDrawOverlays(this)) {
+            FloatingFaceCamService.start(this)
         }
     }
 

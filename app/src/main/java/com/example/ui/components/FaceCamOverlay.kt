@@ -1,6 +1,8 @@
 package com.example.ui.components
 
+import android.content.Context
 import android.view.ViewGroup
+import android.widget.Toast
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -34,7 +36,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.service.FloatingFaceCamOverlayManager
 import kotlin.math.roundToInt
 
 enum class FaceCamShape(val label: String) {
@@ -52,7 +56,7 @@ enum class FaceCamSize(val dpSize: Int) {
 
 /**
  * Floating Selfie FaceCam Overlay for screen-recording / streamer workflow.
- * Renders the live front camera preview in customizable cutout shapes
+ * Renders the live front/back camera preview in customizable cutout shapes
  * (Circle, Rounded Rectangle, Squircle, Rectangle) with drag-to-position support.
  */
 @Composable
@@ -71,6 +75,8 @@ fun FaceCamOverlay(
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
 
+    var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
+
     val clipShape: Shape = remember(shapeMode) {
         when (shapeMode) {
             FaceCamShape.CIRCLE -> CircleShape
@@ -81,6 +87,12 @@ fun FaceCamOverlay(
     }
 
     val currentSize = sizeMode.dpSize.dp
+
+    // Safe camera binding triggered ONLY when useFrontCamera or previewView changes
+    LaunchedEffect(useFrontCamera, previewViewRef) {
+        val pView = previewViewRef ?: return@LaunchedEffect
+        bindCameraSafe(context, lifecycleOwner, pView, useFrontCamera)
+    }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -94,8 +106,7 @@ fun FaceCamOverlay(
     }
 
     Box(
-        modifier = modifier
-            .fillMaxSize()
+        modifier = modifier.fillMaxSize()
     ) {
         Box(
             modifier = Modifier
@@ -132,38 +143,11 @@ fun FaceCamOverlay(
                         )
                         scaleType = PreviewView.ScaleType.FILL_CENTER
                         implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                        previewViewRef = this
                     }
                 },
-                update = { previewView ->
-                    val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
-                    cameraProviderFuture.addListener({
-                        try {
-                            val cameraProvider = cameraProviderFuture.get()
-                            val preview = Preview.Builder().build().also {
-                                it.surfaceProvider = previewView.surfaceProvider
-                            }
-                            val hasFront = cameraProvider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)
-                            val hasBack = cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)
-                            val cameraSelector = when {
-                                useFrontCamera && hasFront -> CameraSelector.DEFAULT_FRONT_CAMERA
-                                !useFrontCamera && hasBack -> CameraSelector.DEFAULT_BACK_CAMERA
-                                hasFront -> CameraSelector.DEFAULT_FRONT_CAMERA
-                                hasBack -> CameraSelector.DEFAULT_BACK_CAMERA
-                                else -> null
-                            }
-
-                            if (cameraSelector != null) {
-                                cameraProvider.unbindAll()
-                                cameraProvider.bindToLifecycle(
-                                    lifecycleOwner,
-                                    cameraSelector,
-                                    preview
-                                )
-                            }
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                        }
-                    }, ContextCompat.getMainExecutor(context))
+                update = {
+                    previewViewRef = it
                 },
                 modifier = Modifier.fillMaxSize()
             )
@@ -230,15 +214,36 @@ fun FaceCamOverlay(
                                 )
                             }
 
-                            // Flip Front/Back Lens
+                            // Switch Camera Lens (Front / Back)
                             IconButton(
-                                onClick = { useFrontCamera = !useFrontCamera },
+                                onClick = {
+                                    useFrontCamera = !useFrontCamera
+                                },
                                 modifier = Modifier.size(32.dp)
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Cameraswitch,
-                                    contentDescription = "Switch Camera",
+                                    imageVector = if (useFrontCamera) Icons.Default.CameraRear else Icons.Default.CameraFront,
+                                    contentDescription = if (useFrontCamera) "Switch to Back Camera" else "Switch to Front Camera",
                                     tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+
+                            // Float over other apps (System Overlay)
+                            IconButton(
+                                onClick = {
+                                    if (FloatingFaceCamOverlayManager.canDrawOverlays(context)) {
+                                        FloatingFaceCamOverlayManager.show(context)
+                                    } else {
+                                        FloatingFaceCamOverlayManager.requestOverlayPermission(context)
+                                    }
+                                },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.OpenInNew,
+                                    contentDescription = "Float over other apps",
+                                    tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(18.dp)
                                 )
                             }
@@ -251,7 +256,7 @@ fun FaceCamOverlay(
                                 Icon(
                                     imageVector = Icons.Default.Close,
                                     contentDescription = "Close FaceCam",
-                                    tint = Color(0xFFFF5252),
+                                    tint = Color(0xFFEF4444),
                                     modifier = Modifier.size(18.dp)
                                 )
                             }
@@ -261,4 +266,61 @@ fun FaceCamOverlay(
             }
         }
     }
+}
+
+/**
+ * Safely resolves and binds either Front or Back camera use case.
+ */
+private fun bindCameraSafe(
+    context: Context,
+    lifecycleOwner: LifecycleOwner,
+    previewView: PreviewView,
+    preferFront: Boolean
+) {
+    val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+    cameraProviderFuture.addListener({
+        try {
+            val cameraProvider = cameraProviderFuture.get()
+            val availableCameras = cameraProvider.availableCameraInfos
+
+            val hasBack = try { cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA) } catch (_: Exception) { false }
+            val hasFront = try { cameraProvider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA) } catch (_: Exception) { false }
+
+            val selector = when {
+                !preferFront && hasBack -> CameraSelector.DEFAULT_BACK_CAMERA
+                preferFront && hasFront -> CameraSelector.DEFAULT_FRONT_CAMERA
+                // Fallback for emulators/custom devices where camera isn't tagged DEFAULT_BACK
+                !preferFront && availableCameras.size > 1 -> {
+                    CameraSelector.Builder().addCameraFilter { list ->
+                        val nonFront = list.filter { it.lensFacing != CameraSelector.LENS_FACING_FRONT }
+                        if (nonFront.isNotEmpty()) nonFront else list.takeLast(1)
+                    }.build()
+                }
+                preferFront && availableCameras.size > 1 -> {
+                    CameraSelector.Builder().addCameraFilter { list ->
+                        val front = list.filter { it.lensFacing == CameraSelector.LENS_FACING_FRONT }
+                        if (front.isNotEmpty()) front else list.take(1)
+                    }.build()
+                }
+                hasBack -> CameraSelector.DEFAULT_BACK_CAMERA
+                hasFront -> CameraSelector.DEFAULT_FRONT_CAMERA
+                else -> CameraSelector.DEFAULT_BACK_CAMERA
+            }
+
+            cameraProvider.unbindAll()
+            val preview = Preview.Builder().build().also {
+                it.surfaceProvider = previewView.surfaceProvider
+            }
+
+            cameraProvider.bindToLifecycle(lifecycleOwner, selector, preview)
+
+            if (availableCameras.size <= 1) {
+                Toast.makeText(context, "1 camera detected on device", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(context, if (preferFront) "Front Camera" else "Back Camera", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }, ContextCompat.getMainExecutor(context))
 }

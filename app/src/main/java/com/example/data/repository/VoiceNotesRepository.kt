@@ -34,6 +34,12 @@ class VoiceNotesRepository(
         dao.deleteFolderById(folderId)
     }
 
+    fun getPinnedFolders(): Flow<List<FolderEntity>> = dao.getPinnedFolders()
+
+    suspend fun togglePinFolder(folder: FolderEntity) = withContext(Dispatchers.IO) {
+        dao.updateFolderPinned(folder.id, !folder.isPinned)
+    }
+
     suspend fun getBreadcrumbs(currentFolderId: Long?): List<FolderEntity> = withContext(Dispatchers.IO) {
         val breadcrumbs = mutableListOf<FolderEntity>()
         var currId = currentFolderId

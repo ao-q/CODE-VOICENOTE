@@ -121,6 +121,10 @@ class VoiceNotesViewModel(application: Application) : AndroidViewModel(applicati
     val allFolders: StateFlow<List<FolderEntity>> = repository.getAllFolders()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    // Pinned folders
+    val pinnedFolders: StateFlow<List<FolderEntity>> = repository.getPinnedFolders()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     // All notes across all folders (for Write Notes section access)
     val allNotes: StateFlow<List<VoiceNoteEntity>> = repository.getAllVoiceNotes()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -397,6 +401,15 @@ class VoiceNotesViewModel(application: Application) : AndroidViewModel(applicati
     // Delete Folder
     fun confirmDeleteFolder(folder: FolderEntity) {
         _uiState.value = _uiState.value.copy(showDeleteConfirmDialog = true, folderToDelete = folder)
+    }
+
+    // Toggle Pin Folder
+    fun togglePinFolder(folder: FolderEntity) {
+        viewModelScope.launch {
+            repository.togglePinFolder(folder)
+            val stateText = if (!folder.isPinned) "pinned" else "unpinned"
+            _uiState.value = _uiState.value.copy(statusMessage = "Folder '${folder.name}' $stateText")
+        }
     }
 
     fun deleteFolder() {
