@@ -27,12 +27,14 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import com.example.data.model.CustomNoteTag
 import java.io.File
 
 enum class MainTab {
     HOME,
     PINS,
-    WRITE
+    WRITE,
+    SETTINGS
 }
 
 data class VoiceNotesUiState(
@@ -63,7 +65,22 @@ data class VoiceNotesUiState(
     val isDetailViewOpen: Boolean = false,
     val isDarkTheme: Boolean = true,
     val isFaceCamActive: Boolean = false,
-    val statusMessage: String? = null
+    val isSyncing: Boolean = false,
+    val showHandwrittenCanvas: Boolean = false,
+    val statusMessage: String? = null,
+    val isMinimalMode: Boolean = false,
+    val customTags: List<CustomNoteTag> = emptyList(),
+    val noteTagAssignments: Map<Long, List<String>> = emptyMap(),
+    val selectedTagId: String? = null,
+    val showSyncOptionsDialog: Boolean = false,
+    val showDrawingModal: Boolean = false,
+    val selectedDrawingNote: VoiceNoteEntity? = null,
+    val canvasInitialBitmap: android.graphics.Bitmap? = null,
+    val canvasInitialTitle: String? = null,
+    val canvasEditingNoteId: Long? = null,
+    val showCreateTagDialog: Boolean = false,
+    val showAssignTagDialog: Boolean = false,
+    val noteToAssignTag: VoiceNoteEntity? = null
 )
 
 class VoiceNotesViewModel(application: Application) : AndroidViewModel(application) {
@@ -77,6 +94,9 @@ class VoiceNotesViewModel(application: Application) : AndroidViewModel(applicati
     private val _uiState = MutableStateFlow(
         VoiceNotesUiState(
             isDarkTheme = storagePreferences.isDarkTheme,
+            isMinimalMode = false,
+            customTags = storagePreferences.getCustomTags(),
+            noteTagAssignments = storagePreferences.getNoteTagAssignments(),
             isStorageConfigured = storagePreferences.isStorageConfigured,
             showStorageConfigDialog = !storagePreferences.isStorageConfigured,
             storageBaseDirectoryDisplay = storagePreferences.getEffectiveBaseDirectory().absolutePath,
@@ -89,6 +109,11 @@ class VoiceNotesViewModel(application: Application) : AndroidViewModel(applicati
         val newDark = !_uiState.value.isDarkTheme
         storagePreferences.isDarkTheme = newDark
         _uiState.value = _uiState.value.copy(isDarkTheme = newDark)
+    }
+
+    fun toggleMinimalMode() {
+        // Minimal mode removed per user request
+        _uiState.value = _uiState.value.copy(isMinimalMode = false)
     }
 
     fun toggleFaceCam(active: Boolean? = null) {
@@ -215,6 +240,23 @@ class VoiceNotesViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    /**
+     * Imports/syncs all audio files and markdown notes from Documents/Voice Notes into the app.
+     */
+    fun syncStorageFiles() {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                isSyncing = true,
+                statusMessage = "Syncing with Documents/Voice Notes..."
+            )
+            val result = repository.syncStorageFiles()
+            _uiState.value = _uiState.value.copy(
+                isSyncing = false,
+                statusMessage = result.message
+            )
+        }
+    }
+
     // Tab Navigation
     fun selectTab(tab: MainTab) {
         _selectedTab.value = tab
@@ -309,6 +351,226 @@ class VoiceNotesViewModel(application: Application) : AndroidViewModel(applicati
 
     fun dismissWriteNoteDialog() {
         _uiState.value = _uiState.value.copy(showWriteNoteDialog = false)
+    }
+
+    // Sync Options Dialog
+    fun openSyncOptionsDialog() {
+        _uiState.value = _uiState.value.copy(showSyncOptionsDialog = true)
+    }
+
+    fun dismissSyncOptionsDialog() {
+        _uiState.value = _uiState.value.copy(showSyncOptionsDialog = false)
+    }
+
+    // Custom Tags
+    fun openCreateTagDialog() {
+        _uiState.value = _uiState.value.copy(showCreateTagDialog = true)
+    }
+
+    fun dismissCreateTagDialog() {
+        _uiState.value = _uiState.value.copy(showCreateTagDialog = false)
+    }
+
+    fun createCustomTag(emoji: String, name: String) {
+        val cleanEmoji = emoji.trim().ifBlank { "🏷️" }
+        val cleanName = name.trim().ifBlank { "Tag" }
+        val newTag = CustomNoteTag(
+            id = "tag_${System.currentTimeMillis()}",
+            emoji = cleanEmoji,
+            name = cleanName
+        )
+        val current = _uiState.value.customTags.toMutableList()
+        current.add(newTag)
+        storagePreferences.saveCustomTags(current)
+        _uiState.value = _uiState.value.copy(
+            customTags = current,
+            showCreateTagDialog = false
+        )
+    }
+
+    fun deleteCustomTag(tagId: String) {
+        val current = _uiState.value.customTags.filter { it.id != tagId }
+        storagePreferences.saveCustomTags(current)
+        val assignments = _uiState.value.noteTagAssignments.mapValues { (_, tags) ->
+            tags.filter { it != tagId }
+        }
+        storagePreferences.saveNoteTagAssignments(assignments)
+        _uiState.value = _uiState.value.copy(
+            customTags = current,
+            noteTagAssignments = assignments,
+            selectedTagId = if (_uiState.value.selectedTagId == tagId) null else _uiState.value.selectedTagId
+        )
+    }
+
+    fun selectTagFilter(tagId: String?) {
+        _uiState.value = _uiState.value.copy(selectedTagId = tagId)
+    }
+
+    fun openAssignTagDialog(note: VoiceNoteEntity) {
+        _uiState.value = _uiState.value.copy(
+            showAssignTagDialog = true,
+            noteToAssignTag = note
+        )
+    }
+
+    fun dismissAssignTagDialog() {
+        _uiState.value = _uiState.value.copy(
+            showAssignTagDialog = false,
+            noteToAssignTag = null
+        )
+    }
+
+    fun toggleTagForNote(noteId: Long, tagId: String) {
+        val map = _uiState.value.noteTagAssignments.toMutableMap()
+        val list = (map[noteId] ?: emptyList()).toMutableList()
+        if (list.contains(tagId)) {
+            list.remove(tagId)
+        } else {
+            list.add(tagId)
+        }
+        map[noteId] = list
+        storagePreferences.saveNoteTagAssignments(map)
+        _uiState.value = _uiState.value.copy(noteTagAssignments = map)
+    }
+
+    // Drawing Modal & Canvas Editing
+    fun openDrawingModal(note: VoiceNoteEntity) {
+        _uiState.value = _uiState.value.copy(
+            showDrawingModal = true,
+            selectedDrawingNote = note
+        )
+    }
+
+    fun dismissDrawingModal() {
+        _uiState.value = _uiState.value.copy(
+            showDrawingModal = false,
+            selectedDrawingNote = null
+        )
+    }
+
+    fun openCanvasForEdit(note: VoiceNoteEntity) {
+        val file = File(note.noteFilePath)
+        val bitmap = if (file.exists()) {
+            try {
+                android.graphics.BitmapFactory.decodeFile(file.absolutePath)
+            } catch (_: Exception) {
+                null
+            }
+        } else null
+
+        _uiState.value = _uiState.value.copy(
+            showDrawingModal = false,
+            selectedDrawingNote = null,
+            showHandwrittenCanvas = true,
+            canvasInitialBitmap = bitmap,
+            canvasInitialTitle = note.title,
+            canvasEditingNoteId = note.id
+        )
+    }
+
+    fun openHandwrittenCanvas() {
+        _uiState.value = _uiState.value.copy(
+            showHandwrittenCanvas = true,
+            canvasInitialBitmap = null,
+            canvasInitialTitle = null,
+            canvasEditingNoteId = null
+        )
+    }
+
+    fun dismissHandwrittenCanvas() {
+        _uiState.value = _uiState.value.copy(
+            showHandwrittenCanvas = false,
+            canvasInitialBitmap = null,
+            canvasInitialTitle = null,
+            canvasEditingNoteId = null
+        )
+    }
+
+    fun saveHandwrittenCanvasNote(title: String, bitmap: android.graphics.Bitmap) {
+        val safeTitle = title.trim().ifBlank { "Drawing" }
+        val editNoteId = _uiState.value.canvasEditingNoteId
+        viewModelScope.launch {
+            if (editNoteId != null) {
+                repository.updateHandwrittenNote(editNoteId, safeTitle, bitmap)
+                _uiState.value = _uiState.value.copy(
+                    showHandwrittenCanvas = false,
+                    canvasInitialBitmap = null,
+                    canvasInitialTitle = null,
+                    canvasEditingNoteId = null,
+                    statusMessage = "Drawing updated"
+                )
+            } else {
+                repository.createHandwrittenNote(
+                    folderId = _currentFolderId.value,
+                    title = safeTitle,
+                    bitmap = bitmap
+                )
+                _uiState.value = _uiState.value.copy(
+                    showHandwrittenCanvas = false,
+                    canvasInitialBitmap = null,
+                    canvasInitialTitle = null,
+                    canvasEditingNoteId = null,
+                    statusMessage = "Drawing saved"
+                )
+            }
+        }
+    }
+
+    // Settings JSON Export & Import
+    fun exportSettingsJson(): String {
+        return storagePreferences.exportSettingsJson()
+    }
+
+    fun importSettingsJson(json: String): Boolean {
+        val success = storagePreferences.importSettingsJson(json)
+        if (success) {
+            _uiState.value = _uiState.value.copy(
+                isDarkTheme = storagePreferences.isDarkTheme,
+                isMinimalMode = storagePreferences.isMinimalMode,
+                customTags = storagePreferences.getCustomTags(),
+                noteTagAssignments = storagePreferences.getNoteTagAssignments(),
+                statusMessage = "Settings loaded"
+            )
+        }
+        return success
+    }
+
+    fun saveSettingsToUri(context: android.content.Context, uri: android.net.Uri) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val json = exportSettingsJson()
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    out.write(json.toByteArray(Charsets.UTF_8))
+                }
+                _uiState.value = _uiState.value.copy(
+                    statusMessage = "Settings saved"
+                )
+            } catch (_: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    statusMessage = "Failed to save settings"
+                )
+            }
+        }
+    }
+
+    fun loadSettingsFromUri(context: android.content.Context, uri: android.net.Uri) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val json = context.contentResolver.openInputStream(uri)?.use { input ->
+                    input.bufferedReader().use { it.readText() }
+                }
+                if (json != null) {
+                    val ok = importSettingsJson(json)
+                    _uiState.value = _uiState.value.copy(
+                        statusMessage = if (ok) "Settings loaded" else "Invalid settings file"
+                    )
+                }
+            } catch (_: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    statusMessage = "Failed to load settings"
+                )
+            }
+        }
     }
 
     fun createWrittenNote(title: String, content: String) {
@@ -541,7 +803,7 @@ class VoiceNotesViewModel(application: Application) : AndroidViewModel(applicati
                     _uiState.value = _uiState.value.copy(selectedDetailNote = updated)
                 }
                 _uiState.value = _uiState.value.copy(
-                    statusMessage = "Renamed & synced to local storage: '$newTitle'"
+                    statusMessage = "Renamed: '$newTitle'"
                 )
             }
         }
@@ -564,6 +826,17 @@ class VoiceNotesViewModel(application: Application) : AndroidViewModel(applicati
             repository.moveVoiceNote(note.id, targetFolderId)
             dismissMoveNoteDialog()
             _uiState.value = _uiState.value.copy(statusMessage = "Moved note to new folder")
+        }
+    }
+
+    fun moveNoteDirectlyToFolder(noteId: Long, targetFolderId: Long?) {
+        viewModelScope.launch {
+            val note = allNotes.value.find { it.id == noteId }
+            val targetFolder = allFolders.value.find { it.id == targetFolderId }
+            repository.moveVoiceNote(noteId, targetFolderId)
+            val noteName = note?.title ?: "Note"
+            val folderName = targetFolder?.name ?: "All Notes"
+            _uiState.value = _uiState.value.copy(statusMessage = "Moved '$noteName' into '$folderName'")
         }
     }
 

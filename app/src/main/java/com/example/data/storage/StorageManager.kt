@@ -144,6 +144,32 @@ class StorageManager(private val context: Context) {
     }
 
     /**
+     * Saves a stylus drawing canvas image as PNG directly in storage without generating text files.
+     */
+    fun saveDrawingToStorage(
+        parentFolderHierarchy: List<String>,
+        userTitle: String?,
+        bitmap: android.graphics.Bitmap,
+        timestamp: Long
+    ): File {
+        val parentDir = resolveParentFolder(parentFolderHierarchy)
+        val defaultTitle = "Drawing_${formatTimestampDate(timestamp)}"
+        val title = userTitle?.trim()?.ifBlank { null } ?: defaultTitle
+        val safeTitle = sanitizeFilename(title)
+        val folderDir = File(parentDir, safeTitle).apply { mkdirs() }
+        val imageFile = File(folderDir, "$safeTitle.png")
+        try {
+            java.io.FileOutputStream(imageFile).use { out ->
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+            }
+            notifyMediaScanner(imageFile)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return imageFile
+    }
+
+    /**
      * Automatically renames the voice note folder, .mp3, and .md
      * on the local storage device to stay perfectly in sync.
      */

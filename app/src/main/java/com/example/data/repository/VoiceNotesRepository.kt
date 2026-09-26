@@ -1,15 +1,24 @@
 package com.example.data.repository
 
+import android.media.MediaMetadataRetriever
+import android.os.Environment
 import com.example.data.db.VoiceNotesDao
 import com.example.data.model.FolderEntity
 import com.example.data.model.SyncTimestampItem
 import com.example.data.model.TimestampMarkerEntity
 import com.example.data.model.VoiceNoteEntity
 import com.example.data.storage.StorageManager
+import com.example.data.storage.StorageUriHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import java.io.File
+
+data class SyncResult(
+    val notesCount: Int,
+    val foldersCount: Int,
+    val message: String
+)
 
 class VoiceNotesRepository(
     private val dao: VoiceNotesDao,
@@ -106,6 +115,63 @@ class VoiceNotesRepository(
             isPinned = false
         )
         dao.insertVoiceNote(entity)
+    }
+
+    /**
+     * Creates a handwritten note from stylus drawing canvas with PNG image in local storage.
+     */
+    suspend fun createHandwrittenNote(
+        folderId: Long?,
+        title: String,
+        bitmap: android.graphics.Bitmap
+    ): Long = withContext(Dispatchers.IO) {
+        val hierarchy = getFolderHierarchyNames(folderId)
+        val createdAt = System.currentTimeMillis()
+        val imageFile = storageManager.saveDrawingToStorage(hierarchy, title, bitmap, createdAt)
+
+        val entity = VoiceNoteEntity(
+            folderId = folderId,
+            title = title.trim().ifBlank { imageFile.nameWithoutExtension },
+            audioFileName = "",
+            audioFilePath = "",
+            noteFileName = imageFile.name,
+            noteFilePath = imageFile.absolutePath,
+            noteContent = imageFile.absolutePath,
+            noteFolderDirectory = imageFile.parentFile?.absolutePath ?: "",
+            durationMs = 0L,
+            createdAt = createdAt,
+            isPinned = false
+        )
+        dao.insertVoiceNote(entity)
+    }
+
+    /**
+     * Updates an existing handwritten drawing note with new bitmap edits.
+     */
+    suspend fun updateHandwrittenNote(
+        noteId: Long,
+        title: String,
+        bitmap: android.graphics.Bitmap
+    ): VoiceNoteEntity? = withContext(Dispatchers.IO) {
+        val note = dao.getVoiceNoteById(noteId) ?: return@withContext null
+        val targetFile = File(note.noteFilePath)
+        try {
+            if (!targetFile.parentFile.exists()) {
+                targetFile.parentFile.mkdirs()
+            }
+            java.io.FileOutputStream(targetFile).use { out ->
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+            }
+            storageManager.notifyMediaScanner(targetFile)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        val updated = note.copy(
+            title = title.trim().ifBlank { note.title }
+        )
+        dao.updateVoiceNote(updated)
+        updated
     }
 
     suspend fun getVoiceNoteById(id: Long): VoiceNoteEntity? = withContext(Dispatchers.IO) {
@@ -297,5 +363,278 @@ class VoiceNotesRepository(
             durationMs = note.durationMs,
             timestamps = allMarkers
         )
+    }
+
+    /**
+     * Imports and synchronizes all voice notes and markdown notes from Documents/Voice Notes
+     * or custom storage directory into the app database.
+     */
+    suspend fun syncStorageFiles(): SyncResult = withContext(Dispatchers.IO) {
+        val baseDir = storageManager.getBaseDirectory()
+        val publicDocs = StorageUriHelper.getPublicDocumentsDir()
+        val extRoot = Environment.getExternalStorageDirectory()
+
+        val candidateDirs = listOf(
+            baseDir,
+            File(publicDocs, "Voice Notes"),
+            File(publicDocs, "VoiceNotes"),
+            File(extRoot, "Documents/Voice Notes"),
+            File(extRoot, "Documents/VoiceNotes"),
+            File(extRoot, "Voice Notes"),
+            File(extRoot, "VoiceNotes")
+        ).filter { it.exists() && it.isDirectory }
+            .distinctBy { it.canonicalPath }
+
+        var totalImportedNotes = 0
+        var totalImportedFolders = 0
+
+        for (dir in candidateDirs) {
+            val (notesCount, foldersCount) = syncDirectoryRecursive(dir, parentFolderId = null)
+            totalImportedNotes += notesCount
+            totalImportedFolders += foldersCount
+        }
+
+        val msg = if (totalImportedNotes > 0 || totalImportedFolders > 0) {
+            "Synced $totalImportedNotes notes & $totalImportedFolders folders"
+        } else {
+            "Storage up to date (Documents/Voice Notes)"
+        }
+        SyncResult(totalImportedNotes, totalImportedFolders, msg)
+    }
+
+    private suspend fun syncDirectoryRecursive(
+        directory: File,
+        parentFolderId: Long?
+    ): Pair<Int, Int> {
+        val children = directory.listFiles() ?: return Pair(0, 0)
+        var notesCount = 0
+        var foldersCount = 0
+
+        val audioExtensions = setOf("mp3", "m4a", "wav", "aac", "ogg", "3gp", "flac")
+        val noteExtensions = setOf("md", "txt", "png")
+
+        val subDirs = children.filter { it.isDirectory }
+        val directFiles = children.filter { it.isFile }
+
+        // 1. Group direct files by their base name
+        val filesByBase = directFiles.groupBy { it.nameWithoutExtension }
+
+        for ((baseName, filesGroup) in filesByBase) {
+            val audioFile = filesGroup.firstOrNull { it.extension.lowercase() in audioExtensions }
+            val noteFile = filesGroup.firstOrNull { it.extension.lowercase() in noteExtensions }
+
+            if (audioFile != null || noteFile != null) {
+                val imported = syncFileOrPair(
+                    folderId = parentFolderId,
+                    folderDir = directory,
+                    baseName = baseName,
+                    audioFile = audioFile,
+                    noteFile = noteFile
+                )
+                if (imported) notesCount++
+            }
+        }
+
+        // 2. Process subdirectories
+        for (subDir in subDirs) {
+            val subChildren = subDir.listFiles() ?: emptyArray()
+            val subAudio = subChildren.firstOrNull { it.isFile && it.extension.lowercase() in audioExtensions }
+            val subNote = subChildren.firstOrNull { it.isFile && it.extension.lowercase() in noteExtensions }
+            val hasNestedDirs = subChildren.any { it.isDirectory }
+
+            // If it's a dedicated single note folder: e.g., folder named "Meeting" containing "Meeting.mp3" and "Meeting.md"
+            val isDedicatedNoteFolder = !hasNestedDirs && (subAudio != null || subNote != null) &&
+                    (subAudio?.nameWithoutExtension.equals(subDir.name, ignoreCase = true) ||
+                     subNote?.nameWithoutExtension.equals(subDir.name, ignoreCase = true) ||
+                     subChildren.count { it.isFile } <= 3)
+
+            if (isDedicatedNoteFolder) {
+                val base = subAudio?.nameWithoutExtension ?: subNote?.nameWithoutExtension ?: subDir.name
+                val imported = syncFileOrPair(
+                    folderId = parentFolderId,
+                    folderDir = subDir,
+                    baseName = base,
+                    audioFile = subAudio,
+                    noteFile = subNote
+                )
+                if (imported) notesCount++
+            } else {
+                // It's a user folder (like "Work", "Lecture", etc.)
+                var folder = dao.getFolderByNameAndParent(subDir.name, parentFolderId)
+                val folderId = if (folder != null) {
+                    folder.id
+                } else {
+                    val newFolder = FolderEntity(
+                        parentId = parentFolderId,
+                        name = subDir.name
+                    )
+                    val newId = dao.insertFolder(newFolder)
+                    foldersCount++
+                    newId
+                }
+
+                // Recursively sync its contents
+                val (childNotes, childFolders) = syncDirectoryRecursive(subDir, folderId)
+                notesCount += childNotes
+                foldersCount += childFolders
+            }
+        }
+
+        return Pair(notesCount, foldersCount)
+    }
+
+    private suspend fun syncFileOrPair(
+        folderId: Long?,
+        folderDir: File,
+        baseName: String,
+        audioFile: File?,
+        noteFile: File?
+    ): Boolean {
+        val audioPath = audioFile?.absolutePath ?: ""
+        val notePath = noteFile?.absolutePath ?: ""
+
+        val existingNote = dao.findVoiceNoteByFilePath(audioPath, notePath)
+            ?: dao.findVoiceNoteByTitleAndFolder(baseName, folderId)
+
+        val (parsedTitle, parsedContent, parsedMarkers) = if (noteFile != null && noteFile.exists() && noteFile.extension.lowercase() in setOf("md", "txt")) {
+            parseMarkdownFile(noteFile)
+        } else if (noteFile != null && noteFile.exists() && noteFile.extension.lowercase() == "png") {
+            Triple(baseName, noteFile.absolutePath, emptyList())
+        } else {
+            Triple(baseName, "", emptyList())
+        }
+
+        val effectiveTitle = parsedTitle.ifBlank { baseName }
+        val durationMs = if (audioFile != null && audioFile.exists()) {
+            getAudioDuration(audioFile)
+        } else 0L
+
+        val lastModified = (audioFile?.lastModified() ?: noteFile?.lastModified() ?: System.currentTimeMillis())
+
+        if (existingNote != null) {
+            // Update existing note with any missing paths or updated content
+            val updated = existingNote.copy(
+                title = if (existingNote.title.isBlank()) effectiveTitle else existingNote.title,
+                audioFileName = audioFile?.name ?: existingNote.audioFileName,
+                audioFilePath = if (audioPath.isNotBlank()) audioPath else existingNote.audioFilePath,
+                noteFileName = noteFile?.name ?: existingNote.noteFileName,
+                noteFilePath = if (notePath.isNotBlank()) notePath else existingNote.noteFilePath,
+                noteFolderDirectory = folderDir.absolutePath,
+                noteContent = if (parsedContent.isNotBlank() && existingNote.noteContent.isBlank()) parsedContent else existingNote.noteContent,
+                durationMs = if (existingNote.durationMs == 0L && durationMs > 0L) durationMs else existingNote.durationMs
+            )
+            dao.updateVoiceNote(updated)
+
+            if (parsedMarkers.isNotEmpty()) {
+                val currentMarkers = dao.getMarkersListForNote(existingNote.id)
+                if (currentMarkers.isEmpty()) {
+                    dao.insertMarkers(parsedMarkers.map {
+                        TimestampMarkerEntity(voiceNoteId = existingNote.id, timeMs = it.timeMs, formattedTime = it.formattedTime, label = it.label)
+                    })
+                }
+            }
+
+            storageManager.notifyMediaScanner(audioFile, noteFile)
+            return false // Was already present
+        }
+
+        // Insert newly discovered voice note
+        val newNote = VoiceNoteEntity(
+            folderId = folderId,
+            title = effectiveTitle,
+            audioFileName = audioFile?.name ?: "",
+            audioFilePath = audioPath,
+            noteFileName = noteFile?.name ?: "",
+            noteFilePath = notePath,
+            noteFolderDirectory = folderDir.absolutePath,
+            createdAt = lastModified,
+            durationMs = durationMs,
+            noteContent = parsedContent,
+            isPinned = false
+        )
+        val newNoteId = dao.insertVoiceNote(newNote)
+
+        if (parsedMarkers.isNotEmpty()) {
+            dao.insertMarkers(parsedMarkers.map {
+                TimestampMarkerEntity(
+                    voiceNoteId = newNoteId,
+                    timeMs = it.timeMs,
+                    formattedTime = it.formattedTime,
+                    label = it.label
+                )
+            })
+        }
+
+        storageManager.notifyMediaScanner(audioFile, noteFile)
+        return true
+    }
+
+    private fun parseMarkdownFile(file: File): Triple<String, String, List<SyncTimestampItem>> {
+        val text = try {
+            file.readText(Charsets.UTF_8)
+        } catch (_: Exception) {
+            ""
+        }
+        if (text.isBlank()) return Triple(file.nameWithoutExtension, "", emptyList())
+
+        val lines = text.lines()
+        var title = file.nameWithoutExtension
+        val notesContent = java.lang.StringBuilder()
+        val timestamps = mutableListOf<SyncTimestampItem>()
+        var inNotesSection = false
+        var inTimestampsSection = false
+
+        if (lines.isNotEmpty() && lines[0].startsWith("# ")) {
+            title = lines[0].removePrefix("# ").trim().ifBlank { file.nameWithoutExtension }
+            for (i in 1 until lines.size) {
+                val line = lines[i]
+                val trimmed = line.trim()
+                if (trimmed == "## Notes") {
+                    inNotesSection = true
+                    inTimestampsSection = false
+                    continue
+                }
+                if (trimmed == "## Timestamps") {
+                    inNotesSection = false
+                    inTimestampsSection = true
+                    continue
+                }
+                if (inNotesSection) {
+                    if (trimmed == "*(No additional notes taken)*") continue
+                    notesContent.append(line).append("\n")
+                } else if (inTimestampsSection) {
+                    val match = Regex("""-\s+\*\*\[(\d+:\d+)\]\*\*\s+(.*)""").find(trimmed)
+                    if (match != null) {
+                        val formatted = match.groupValues[1]
+                        val label = match.groupValues[2].trim()
+                        val parts = formatted.split(":")
+                        val timeMs = if (parts.size == 2) {
+                            (parts[0].toLongOrNull() ?: 0L) * 60000 + (parts[1].toLongOrNull() ?: 0L) * 1000
+                        } else 0L
+                        timestamps.add(SyncTimestampItem(timeMs = timeMs, formattedTime = formatted, label = label))
+                    }
+                } else if (!line.startsWith("- **Recorded on:**") && !line.startsWith("- **Duration:**")) {
+                    if (!inNotesSection && !inTimestampsSection && line.isNotBlank()) {
+                        notesContent.append(line).append("\n")
+                    }
+                }
+            }
+        } else {
+            notesContent.append(text)
+        }
+
+        return Triple(title, notesContent.toString().trim(), timestamps)
+    }
+
+    private fun getAudioDuration(file: File): Long {
+        return try {
+            val retriever = MediaMetadataRetriever()
+            retriever.setDataSource(file.absolutePath)
+            val durStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+            retriever.release()
+            durStr?.toLongOrNull() ?: 0L
+        } catch (_: Exception) {
+            0L
+        }
     }
 }

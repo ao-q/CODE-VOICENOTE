@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreTime
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Stop
@@ -387,9 +388,11 @@ private fun RecordingStudioSection(
                         )
                     }
 
+                    // Minimize Overlay Button (Minimize voice recording bar to floating overlay)
                     IconButton(
                         onClick = {
                             if (FloatingRecordingOverlayManager.canDrawOverlays(context)) {
+                                FloatingRecordingOverlayManager.show(context)
                                 (context as? Activity)?.moveTaskToBack(true)
                             } else {
                                 FloatingRecordingOverlayManager.requestOverlayPermission(context)
@@ -397,11 +400,11 @@ private fun RecordingStudioSection(
                         },
                         modifier = Modifier
                             .size(36.dp)
-                            .testTag("floating_window_button")
+                            .testTag("minimize_overlay_button")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Layers,
-                            contentDescription = "Floating Window",
+                            imageVector = Icons.Default.PictureInPictureAlt,
+                            contentDescription = "Minimize Overlay",
                             tint = MaterialTheme.colorScheme.primary
                         )
                     }
@@ -702,22 +705,15 @@ private fun WriteNotesSection(
                                     .clickable { isPreviewMode = false }
                                     .testTag("notes_edit_tab")
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                Box(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
                                         Icons.Default.Edit,
                                         contentDescription = "Edit",
-                                        modifier = Modifier.size(13.dp),
+                                        modifier = Modifier.size(16.dp),
                                         tint = if (!isPreviewMode) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Spacer(modifier = Modifier.width(3.dp))
-                                    Text(
-                                        text = "Edit",
-                                        fontSize = 11.sp,
-                                        fontWeight = if (!isPreviewMode) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (!isPreviewMode) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }
@@ -729,22 +725,15 @@ private fun WriteNotesSection(
                                     .clickable { isPreviewMode = true }
                                     .testTag("notes_preview_tab")
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                Box(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
                                         Icons.Default.Visibility,
                                         contentDescription = "Preview",
-                                        modifier = Modifier.size(13.dp),
+                                        modifier = Modifier.size(16.dp),
                                         tint = if (isPreviewMode) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Spacer(modifier = Modifier.width(3.dp))
-                                    Text(
-                                        text = "Preview",
-                                        fontSize = 11.sp,
-                                        fontWeight = if (isPreviewMode) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (isPreviewMode) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }

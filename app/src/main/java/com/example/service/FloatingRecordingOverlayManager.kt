@@ -109,10 +109,24 @@ object FloatingRecordingOverlayManager {
 
             val statusDot = view.findViewById<ImageView>(R.id.float_status_dot)
             val timerText = view.findViewById<TextView>(R.id.float_timer_text)
+            val btnMinimize = view.findViewById<ImageButton>(R.id.float_btn_minimize)
+            val actionsLayout = view.findViewById<View>(R.id.float_actions_layout)
             val btnFlag = view.findViewById<ImageButton>(R.id.float_btn_flag)
             val btnPauseResume = view.findViewById<ImageButton>(R.id.float_btn_pause_resume)
             val btnStop = view.findViewById<ImageButton>(R.id.float_btn_stop)
             val btnOpen = view.findViewById<ImageButton>(R.id.float_btn_open)
+
+            var isOverlayMinimized = false
+            btnMinimize.setOnClickListener {
+                vibrate(appContext)
+                isOverlayMinimized = !isOverlayMinimized
+                actionsLayout.visibility = if (isOverlayMinimized) View.GONE else View.VISIBLE
+                btnMinimize.setImageResource(if (isOverlayMinimized) R.drawable.ic_float_expand else R.drawable.ic_float_minimize)
+                btnMinimize.contentDescription = if (isOverlayMinimized) "Expand Overlay" else "Minimize Overlay"
+                try {
+                    windowManager?.updateViewLayout(overlayView, params)
+                } catch (_: Exception) {}
+            }
 
             // Setup Draggable behavior on root view
             val touchSlop = ViewConfiguration.get(appContext).scaledTouchSlop

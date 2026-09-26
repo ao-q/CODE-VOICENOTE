@@ -19,6 +19,7 @@ import android.provider.Settings
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
@@ -56,6 +57,8 @@ class FloatingFaceCamService : Service(), LifecycleOwner {
     private var currentShape = SystemFaceCamShape.CIRCLE
     private var currentSizeDp = 150
     private var isFrontCamera = true
+    private var activeCamera: androidx.camera.core.Camera? = null
+    private var currentZoomRatio = 1.0f
 
     companion object {
         const val CHANNEL_ID = "facecam_overlay_channel"
@@ -206,6 +209,7 @@ class FloatingFaceCamService : Service(), LifecycleOwner {
 
             val cameraContainer = view.findViewById<ViewGroup>(R.id.facecam_camera_container)
             val pView = view.findViewById<PreviewView>(R.id.facecam_preview_view)
+            pView.implementationMode = PreviewView.ImplementationMode.PERFORMANCE
             previewView = pView
 
             val controlsPanel = view.findViewById<LinearLayout>(R.id.facecam_controls_panel)
@@ -216,6 +220,18 @@ class FloatingFaceCamService : Service(), LifecycleOwner {
 
             applyShapeAndSize(cameraContainer, currentShape, currentSizeDp)
 
+            // Setup Pinch-to-Zoom ScaleGestureDetector
+            val scaleDetector = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                override fun onScale(detector: ScaleGestureDetector): Boolean {
+                    val factor = detector.scaleFactor
+                    val maxZoom = activeCamera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: 5f
+                    val minZoom = activeCamera?.cameraInfo?.zoomState?.value?.minZoomRatio ?: 1f
+                    currentZoomRatio = (currentZoomRatio * factor).coerceIn(minZoom, maxZoom)
+                    activeCamera?.cameraControl?.setZoomRatio(currentZoomRatio)
+                    return true
+                }
+            })
+
             // Setup Draggable physics
             val touchSlop = ViewConfiguration.get(this).scaledTouchSlop
             var initialX = 0
@@ -225,6 +241,12 @@ class FloatingFaceCamService : Service(), LifecycleOwner {
             var isDragging = false
 
             view.setOnTouchListener { _, event ->
+                scaleDetector.onTouchEvent(event)
+                if (scaleDetector.isInProgress || event.pointerCount > 1) {
+                    // Suppress drag while pinch zooming
+                    return@setOnTouchListener true
+                }
+
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
                         initialX = params.x
@@ -341,14 +363,17 @@ class FloatingFaceCamService : Service(), LifecycleOwner {
                 }
 
                 provider.unbindAll()
-                val preview = Preview.Builder().build().also {
-                    it.surfaceProvider = pView.surfaceProvider
-                }
-                provider.bindToLifecycle(
+                val preview = Preview.Builder()
+                    .setTargetResolution(android.util.Size(640, 480))
+                    .build().also {
+                        it.surfaceProvider = pView.surfaceProvider
+                    }
+                activeCamera = provider.bindToLifecycle(
                     this,
                     selector,
                     preview
                 )
+                activeCamera?.cameraControl?.setZoomRatio(currentZoomRatio)
 
                 if (availableCameras.size <= 1) {
                     Toast.makeText(this, "1 camera detected on device", Toast.LENGTH_SHORT).show()

@@ -12,11 +12,13 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -32,13 +34,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.service.FloatingFaceCamOverlayManager
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.util.Locale
 import kotlin.math.roundToInt
 
 enum class FaceCamShape(val label: String) {
@@ -75,6 +82,12 @@ fun FaceCamOverlay(
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
 
+    var boundCamera by remember { mutableStateOf<androidx.camera.core.Camera?>(null) }
+    var currentZoomRatio by remember { mutableFloatStateOf(1f) }
+    var showZoomBadge by remember { mutableStateOf(false) }
+    var zoomBadgeTimeoutJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val coroutineScope = rememberCoroutineScope()
+
     var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
 
     val clipShape: Shape = remember(shapeMode) {
@@ -91,7 +104,10 @@ fun FaceCamOverlay(
     // Safe camera binding triggered ONLY when useFrontCamera or previewView changes
     LaunchedEffect(useFrontCamera, previewViewRef) {
         val pView = previewViewRef ?: return@LaunchedEffect
-        bindCameraSafe(context, lifecycleOwner, pView, useFrontCamera)
+        bindCameraSafe(context, lifecycleOwner, pView, useFrontCamera) { camera ->
+            boundCamera = camera
+            camera.cameraControl.setZoomRatio(currentZoomRatio)
+        }
     }
 
     DisposableEffect(Unit) {
@@ -114,26 +130,64 @@ fun FaceCamOverlay(
                 .align(Alignment.TopEnd)
                 .padding(top = 80.dp, end = 16.dp)
                 .size(currentSize)
-                .pointerInput(Unit) {
-                    detectDragGestures { change, dragAmount ->
-                        change.consume()
-                        offsetX += dragAmount.x
-                        offsetY += dragAmount.y
+                .pointerInput(boundCamera, currentZoomRatio) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        var totalPan = androidx.compose.ui.geometry.Offset.Zero
+                        var isPinching = false
+                        var isDragging = false
+                        val touchSlop = viewConfiguration.touchSlop
+
+                        do {
+                            val event = awaitPointerEvent()
+                            if (event.changes.size >= 2) {
+                                // Multi-touch pinch-to-zoom
+                                isPinching = true
+                                val zoomChange = event.calculateZoom()
+                                if (zoomChange != 1f) {
+                                    val maxZoom = boundCamera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: 6f
+                                    val minZoom = boundCamera?.cameraInfo?.zoomState?.value?.minZoomRatio ?: 1f
+                                    val newRatio = (currentZoomRatio * zoomChange).coerceIn(minZoom, maxZoom)
+                                    currentZoomRatio = newRatio
+                                    boundCamera?.cameraControl?.setZoomRatio(newRatio)
+                                    showZoomBadge = true
+                                    zoomBadgeTimeoutJob?.cancel()
+                                    zoomBadgeTimeoutJob = coroutineScope.launch {
+                                        delay(1200)
+                                        showZoomBadge = false
+                                    }
+                                }
+                                val panChange = event.calculatePan()
+                                offsetX += panChange.x
+                                offsetY += panChange.y
+                                event.changes.forEach { it.consume() }
+                            } else if (event.changes.size == 1) {
+                                val change = event.changes[0]
+                                val diff = change.position - change.previousPosition
+                                totalPan += diff
+                                if (!isDragging && totalPan.getDistance() > touchSlop) {
+                                    isDragging = true
+                                }
+                                if (isDragging) {
+                                    offsetX += diff.x
+                                    offsetY += diff.y
+                                    change.consume()
+                                }
+                            }
+                        } while (event.changes.any { it.pressed })
+
+                        if (!isDragging && !isPinching) {
+                            showControls = !showControls
+                        }
                     }
                 }
                 .shadow(12.dp, clipShape)
                 .clip(clipShape)
                 .background(Color.Black)
-                .border(2.5.dp, MaterialTheme.colorScheme.primary, clipShape)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) {
-                    showControls = !showControls
-                },
+                .border(2.5.dp, MaterialTheme.colorScheme.primary, clipShape),
             contentAlignment = Alignment.Center
         ) {
-            // CameraX Preview View
+            // CameraX Preview View (PERFORMANCE mode = direct SurfaceView zero-copy rendering, eliminating lag)
             AndroidView(
                 factory = { ctx ->
                     PreviewView(ctx).apply {
@@ -142,7 +196,7 @@ fun FaceCamOverlay(
                             ViewGroup.LayoutParams.MATCH_PARENT
                         )
                         scaleType = PreviewView.ScaleType.FILL_CENTER
-                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                        implementationMode = PreviewView.ImplementationMode.PERFORMANCE
                         previewViewRef = this
                     }
                 },
@@ -151,6 +205,29 @@ fun FaceCamOverlay(
                 },
                 modifier = Modifier.fillMaxSize()
             )
+
+            // Real-time Zoom Badge during pinch gesture
+            AnimatedVisibility(
+                visible = showZoomBadge,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 8.dp)
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = Color.Black.copy(alpha = 0.78f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
+                ) {
+                    Text(
+                        text = String.format(Locale.US, "%.1fx", currentZoomRatio),
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                    )
+                }
+            }
 
             // On-Screen Quick Control Bar when tapped
             AnimatedVisibility(
@@ -229,6 +306,34 @@ fun FaceCamOverlay(
                                 )
                             }
 
+                            // Quick Zoom Cycle button (1x -> 2x -> 3x -> 1x)
+                            IconButton(
+                                onClick = {
+                                    val maxZoom = boundCamera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: 5f
+                                    val nextZoom = when {
+                                        currentZoomRatio < 1.9f && maxZoom >= 2f -> 2.0f
+                                        currentZoomRatio < 2.9f && maxZoom >= 3f -> 3.0f
+                                        else -> 1.0f
+                                    }
+                                    currentZoomRatio = nextZoom
+                                    boundCamera?.cameraControl?.setZoomRatio(nextZoom)
+                                    showZoomBadge = true
+                                    zoomBadgeTimeoutJob?.cancel()
+                                    zoomBadgeTimeoutJob = coroutineScope.launch {
+                                        delay(1200)
+                                        showZoomBadge = false
+                                    }
+                                },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Text(
+                                    text = String.format(Locale.US, "%.0fx", currentZoomRatio),
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
                             // Float over other apps (System Overlay)
                             IconButton(
                                 onClick = {
@@ -275,7 +380,8 @@ private fun bindCameraSafe(
     context: Context,
     lifecycleOwner: LifecycleOwner,
     previewView: PreviewView,
-    preferFront: Boolean
+    preferFront: Boolean,
+    onCameraBound: (androidx.camera.core.Camera) -> Unit = {}
 ) {
     val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
     cameraProviderFuture.addListener({
@@ -308,11 +414,15 @@ private fun bindCameraSafe(
             }
 
             cameraProvider.unbindAll()
-            val preview = Preview.Builder().build().also {
-                it.surfaceProvider = previewView.surfaceProvider
-            }
+            // Set 640x480 resolution for lag-free performance on all devices
+            val preview = Preview.Builder()
+                .setTargetResolution(android.util.Size(640, 480))
+                .build().also {
+                    it.surfaceProvider = previewView.surfaceProvider
+                }
 
-            cameraProvider.bindToLifecycle(lifecycleOwner, selector, preview)
+            val camera = cameraProvider.bindToLifecycle(lifecycleOwner, selector, preview)
+            onCameraBound(camera)
 
             if (availableCameras.size <= 1) {
                 Toast.makeText(context, "1 camera detected on device", Toast.LENGTH_SHORT).show()

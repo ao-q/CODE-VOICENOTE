@@ -8,16 +8,34 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.zIndex
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -51,6 +69,18 @@ import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Brush
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.LightMode
@@ -61,8 +91,10 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VideocamOff
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.input.pointer.pointerInput
 import com.example.service.FloatingFaceCamOverlayManager
@@ -130,11 +162,15 @@ import com.example.service.RecordingSessionState
 import com.example.ui.MainTab
 import com.example.ui.VoiceNotesViewModel
 import com.example.ui.components.ActiveRecordingPane
+import com.example.ui.components.AssignTagDialog
 import com.example.ui.components.AudioPlayerBottomBar
+import com.example.ui.components.CreateCustomTagDialog
 import com.example.ui.components.DeleteConfirmDialog
+import com.example.ui.components.DrawingDetailDialog
 import com.example.ui.components.EmptyCanvasView
 import com.example.ui.components.FaceCamOverlay
 import com.example.ui.components.FullScreenMarkdownEditor
+import com.example.ui.components.HandwrittenCanvasBoard
 import com.example.ui.components.MoveNoteDialog
 import com.example.ui.components.NewFolderDialog
 import com.example.ui.components.NoteDetailScreen
@@ -142,6 +178,7 @@ import com.example.ui.components.PlayingEqualizerBars
 import com.example.ui.components.RenameFolderDialog
 import com.example.ui.components.RenameNoteDialog
 import com.example.ui.components.StorageConfigOverlay
+import com.example.ui.components.SyncOptionsDialog
 import com.example.ui.components.WriteNoteDialog
 import com.example.ui.components.WriteNotesSection
 import com.example.ui.theme.RecorderRed
@@ -176,6 +213,23 @@ fun MainVoiceNotesScreen(
     var isSearchVisible by remember { mutableStateOf(false) }
     var pendingInitialTitle by remember { mutableStateOf("") }
     var pendingInitialNotes by remember { mutableStateOf("") }
+
+    // Drag-and-drop state for moving drawings/recordings/markdown files directly into folders
+    var draggedNote by remember { mutableStateOf<VoiceNoteEntity?>(null) }
+    var dragPosition by remember { mutableStateOf(Offset.Zero) }
+    var hoveredFolderId by remember { mutableStateOf<Long?>(null) }
+    val folderBounds = remember { mutableMapOf<Long, Rect>() }
+    var rootFolderBounds by remember { mutableStateOf<Rect?>(null) }
+
+    val syncInfiniteTransition = rememberInfiniteTransition(label = "sync_spin")
+    val syncRotation by syncInfiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 900, easing = LinearEasing)
+        ),
+        label = "sync_rotation"
+    )
 
     // Resume listener: if user returns from Android Settings after enabling "Display over other apps", auto-promote FaceCam to floating service
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -219,6 +273,22 @@ fun MainVoiceNotesScreen(
                 viewModel.toggleFaceCam(true)
                 FloatingFaceCamOverlayManager.show(context)
             }
+        }
+    }
+
+    val saveSettingsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            viewModel.saveSettingsToUri(context, uri)
+        }
+    }
+
+    val loadSettingsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.loadSettingsFromUri(context, uri)
         }
     }
 
@@ -480,12 +550,49 @@ fun MainVoiceNotesScreen(
         )
     }
 
+    if (uiState.showSyncOptionsDialog) {
+        SyncOptionsDialog(
+            onDismiss = { viewModel.dismissSyncOptionsDialog() },
+            onSyncFromDevice = { viewModel.syncStorageFiles() },
+            onSaveSettings = { saveSettingsLauncher.launch("voice_notes_settings.json") },
+            onLoadSettings = { loadSettingsLauncher.launch(arrayOf("application/json", "text/*")) }
+        )
+    }
+
+    if (uiState.showDrawingModal && uiState.selectedDrawingNote != null) {
+        DrawingDetailDialog(
+            note = uiState.selectedDrawingNote!!,
+            onDismiss = { viewModel.dismissDrawingModal() },
+            onEdit = { viewModel.openCanvasForEdit(uiState.selectedDrawingNote!!) },
+            onDelete = { viewModel.confirmDeleteNote(uiState.selectedDrawingNote!!) }
+        )
+    }
+
+    if (uiState.showCreateTagDialog) {
+        CreateCustomTagDialog(
+            onDismiss = { viewModel.dismissCreateTagDialog() },
+            onConfirm = { emoji, name -> viewModel.createCustomTag(emoji, name) }
+        )
+    }
+
+    if (uiState.showAssignTagDialog && uiState.noteToAssignTag != null) {
+        AssignTagDialog(
+            note = uiState.noteToAssignTag!!,
+            tags = uiState.customTags,
+            assignedTagIds = uiState.noteTagAssignments[uiState.noteToAssignTag!!.id] ?: emptyList(),
+            onToggleTag = { tagId -> viewModel.toggleTagForNote(uiState.noteToAssignTag!!.id, tagId) },
+            onCreateNewTag = { viewModel.openCreateTagDialog() },
+            onDismiss = { viewModel.dismissAssignTagDialog() }
+        )
+    }
+
     // BackHandler for intuitive Android back-button behavior
-    BackHandler(enabled = uiState.currentFolderId != null || isSearchVisible || uiState.searchQuery.isNotBlank()) {
+    BackHandler(enabled = uiState.selectedTab != MainTab.HOME || uiState.currentFolderId != null || isSearchVisible || uiState.searchQuery.isNotBlank()) {
         when {
             uiState.searchQuery.isNotBlank() -> viewModel.clearSearch()
             isSearchVisible -> isSearchVisible = false
             uiState.currentFolderId != null -> viewModel.navigateUp()
+            uiState.selectedTab != MainTab.HOME -> viewModel.selectTab(MainTab.HOME)
         }
     }
 
@@ -505,7 +612,7 @@ fun MainVoiceNotesScreen(
             TopAppBar(
                 title = {
                     if (uiState.breadcrumbs.isEmpty()) {
-                        VoiceNotesTitleWithRedDot()
+                        VoiceNotesTitle()
                     } else {
                         Column {
                             Text(
@@ -531,36 +638,6 @@ fun MainVoiceNotesScreen(
                     }
                 },
                 actions = {
-                    // Sun / Moon Theme Toggle Icon
-                    IconButton(
-                        onClick = {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            viewModel.toggleTheme()
-                        },
-                        modifier = Modifier.testTag("toggle_theme_button")
-                    ) {
-                        Icon(
-                            imageVector = if (uiState.isDarkTheme) Icons.Default.LightMode else Icons.Default.DarkMode,
-                            contentDescription = if (uiState.isDarkTheme) "Warm Tint Theme" else "Charcoal Black Theme",
-                            tint = if (uiState.isDarkTheme) Color(0xFFFFB300) else MaterialTheme.colorScheme.primary
-                        )
-                    }
-
-                    // Direct New Folder icon button on homescreen
-                    IconButton(
-                        onClick = {
-                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                            viewModel.openNewFolderDialog()
-                        },
-                        modifier = Modifier.testTag("create_new_folder_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.CreateNewFolder,
-                            contentDescription = "New Folder",
-                            tint = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-
                     // Search toggle button
                     IconButton(
                         onClick = { isSearchVisible = !isSearchVisible },
@@ -573,15 +650,18 @@ fun MainVoiceNotesScreen(
                         )
                     }
 
-                    // Quick Storage Config icon
+                    // Sun / Moon Theme Toggle Icon (Sun when light theme is active, Moon when dark theme is active)
                     IconButton(
-                        onClick = { viewModel.openStorageConfigDialog() },
-                        modifier = Modifier.testTag("storage_config_icon_button")
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.toggleTheme()
+                        },
+                        modifier = Modifier.testTag("toggle_theme_button")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.FolderOpen,
-                            contentDescription = "Storage Folder",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            imageVector = if (uiState.isDarkTheme) Icons.Default.DarkMode else Icons.Default.LightMode,
+                            contentDescription = if (uiState.isDarkTheme) "Dark Theme" else "Light Theme",
+                            tint = if (uiState.isDarkTheme) Color(0xFFFFD54F) else Color(0xFFF59E0B)
                         )
                     }
                 },
@@ -591,75 +671,77 @@ fun MainVoiceNotesScreen(
             )
         },
         floatingActionButton = {
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                // Secondary Quick Action: Direct FaceCam Toggle
-                SmallFloatingActionButton(
-                    onClick = {
-                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                        initiateFaceCam()
-                    },
-                    containerColor = if (isFaceCamOverlayShowing || uiState.isFaceCamActive) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.surfaceVariant
-                    },
-                    contentColor = if (isFaceCamOverlayShowing || uiState.isFaceCamActive) {
-                        MaterialTheme.colorScheme.onPrimary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    shape = CircleShape,
-                    modifier = Modifier
-                        .size(44.dp)
-                        .testTag("toggle_facecam_fab")
+            if (uiState.selectedTab != MainTab.SETTINGS) {
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Icon(
-                        imageVector = if (isFaceCamOverlayShowing || uiState.isFaceCamActive) {
-                            Icons.Default.Videocam
-                        } else {
-                            Icons.Default.VideocamOff
+                    // Secondary Quick Action: Direct FaceCam Toggle
+                    SmallFloatingActionButton(
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            initiateFaceCam()
                         },
-                        contentDescription = "Toggle FaceCam Camera",
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-
-                // Prominent Stock Android / Pixel Recorder FAB:
-                // Single tap: start audio recording immediately
-                // Long press / hold: toggle FaceCam overlay with haptic feedback
-                Surface(
-                    modifier = Modifier
-                        .size(64.dp)
-                        .shadow(elevation = 6.dp, shape = CircleShape)
-                        .clip(CircleShape)
-                        .combinedClickable(
-                            onClick = {
-                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                checkAndStartRecording()
-                            },
-                            onLongClick = {
-                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                                initiateFaceCam()
-                            }
-                        )
-                        .testTag("start_recording_fab"),
-                    shape = CircleShape,
-                    color = RecorderRed,
-                    contentColor = Color.White
-                ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier.fillMaxSize()
+                        containerColor = if (isFaceCamOverlayShowing || uiState.isFaceCamActive) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        },
+                        contentColor = if (isFaceCamOverlayShowing || uiState.isFaceCamActive) {
+                            MaterialTheme.colorScheme.onPrimary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        shape = CircleShape,
+                        modifier = Modifier
+                            .size(44.dp)
+                            .testTag("toggle_facecam_fab")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Mic,
-                            contentDescription = "Tap to Record, Hold for FaceCam",
-                            tint = Color.White,
-                            modifier = Modifier.size(32.dp)
+                            imageVector = if (isFaceCamOverlayShowing || uiState.isFaceCamActive) {
+                                Icons.Default.Videocam
+                            } else {
+                                Icons.Default.VideocamOff
+                            },
+                            contentDescription = "Toggle FaceCam Camera",
+                            modifier = Modifier.size(22.dp)
                         )
+                    }
+
+                    // Prominent Stock Android / Pixel Recorder FAB:
+                    // Single tap: start audio recording immediately
+                    // Long press / hold: toggle FaceCam overlay with haptic feedback
+                    Surface(
+                        modifier = Modifier
+                            .size(64.dp)
+                            .shadow(elevation = 6.dp, shape = CircleShape)
+                            .clip(CircleShape)
+                            .combinedClickable(
+                                onClick = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    checkAndStartRecording()
+                                },
+                                onLongClick = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    initiateFaceCam()
+                                }
+                            )
+                            .testTag("start_recording_fab"),
+                        shape = CircleShape,
+                        color = RecorderRed,
+                        contentColor = Color.White
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Mic,
+                                contentDescription = "Tap to Record, Hold for FaceCam",
+                                tint = Color.White,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -743,6 +825,16 @@ fun MainVoiceNotesScreen(
                         alwaysShowLabel = false,
                         modifier = Modifier.testTag("tab_write_notes")
                     )
+                    NavigationBarItem(
+                        selected = uiState.selectedTab == MainTab.SETTINGS,
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.selectTab(MainTab.SETTINGS)
+                        },
+                        icon = { Icon(Icons.Default.Settings, contentDescription = "Settings") },
+                        alwaysShowLabel = false,
+                        modifier = Modifier.testTag("tab_settings")
+                    )
                 }
             }
         }
@@ -753,37 +845,58 @@ fun MainVoiceNotesScreen(
                 .padding(innerPadding)
         ) {
             // Storage Location line matching sketch: "Int. Stor > Documents > VoiceNotes     Change"
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = if (uiState.friendlyStoragePath.isNotBlank()) uiState.friendlyStoragePath else "Int. Stor > Documents > VoiceNotes",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+            if (uiState.selectedTab != MainTab.SETTINGS) {
+                Row(
                     modifier = Modifier
-                        .weight(1f)
-                        .clickable { viewModel.openStorageConfigDialog() }
-                        .testTag("storage_location_path")
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Text(
-                    text = "Change",
-                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                    color = Color(0xFF38BDF8),
-                    modifier = Modifier
-                        .clickable { viewModel.openStorageConfigDialog() }
-                        .testTag("storage_change_button")
-                )
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = if (uiState.friendlyStoragePath.isNotBlank()) uiState.friendlyStoragePath else "Int. Stor > Documents > VoiceNotes",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { viewModel.openStorageConfigDialog() }
+                            .testTag("storage_location_path")
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    IconButton(
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            viewModel.openSyncOptionsDialog()
+                        },
+                        modifier = Modifier
+                            .size(30.dp)
+                            .testTag("storage_sync_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Sync,
+                            contentDescription = "Sync",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .size(18.dp)
+                                .then(if (uiState.isSyncing) Modifier.rotate(syncRotation) else Modifier)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Change",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                        color = Color(0xFF38BDF8),
+                        modifier = Modifier
+                            .clickable { viewModel.openStorageConfigDialog() }
+                            .testTag("storage_change_button")
+                    )
+                }
             }
 
             // Search input if open
-            AnimatedVisibility(visible = isSearchVisible || uiState.searchQuery.isNotBlank()) {
+            AnimatedVisibility(visible = (isSearchVisible || uiState.searchQuery.isNotBlank()) && uiState.selectedTab != MainTab.SETTINGS) {
                 OutlinedTextField(
                     value = uiState.searchQuery,
                     onValueChange = { viewModel.onSearchQueryChanged(it) },
@@ -815,14 +928,34 @@ fun MainVoiceNotesScreen(
                 modifier = Modifier.weight(1f)
             ) { currentTab ->
                 when (currentTab) {
+                    MainTab.SETTINGS -> {
+                        SettingsScreen(
+                            onSyncFromDevice = { viewModel.syncStorageFiles() },
+                            onSaveSettings = { saveSettingsLauncher.launch("voice_notes_settings.json") },
+                            onLoadSettings = { loadSettingsLauncher.launch(arrayOf("application/json", "text/*")) },
+                            customTags = uiState.customTags,
+                            onCreateTag = { viewModel.openCreateTagDialog() },
+                            onDeleteTag = { viewModel.deleteCustomTag(it) },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
                     MainTab.WRITE -> {
                         WriteNotesSection(
                             notes = allNotes,
                             folders = allFolders,
                             pinnedFolders = pinnedFolders,
                             playerState = playerState,
+                            isMinimalMode = false,
+                            customTags = uiState.customTags,
+                            noteTagAssignments = uiState.noteTagAssignments,
+                            selectedTagId = uiState.selectedTagId,
+                            onSelectTagFilter = { viewModel.selectTagFilter(it) },
+                            onCreateTag = { viewModel.openCreateTagDialog() },
+                            onAssignTag = { viewModel.openAssignTagDialog(it) },
                             onCreateNewNote = { viewModel.openFullScreenEditorForNew() },
                             onStartRecording = { checkAndStartRecording() },
+                            onOpenHandwrittenBoard = { viewModel.openHandwrittenCanvas() },
+                            onOpenDrawingModal = { note -> viewModel.openDrawingModal(note) },
                             onOpenNoteInEditor = { note -> viewModel.openFullScreenEditorForNote(note) },
                             onTogglePin = { note -> viewModel.togglePinNote(note) },
                             onTogglePinFolder = { folder -> viewModel.togglePinFolder(folder) },
@@ -830,6 +963,7 @@ fun MainVoiceNotesScreen(
                             onRename = { note -> viewModel.openRenameNoteDialog(note) },
                             onMove = { note -> viewModel.openMoveNoteDialog(note) },
                             onDelete = { note -> viewModel.confirmDeleteNote(note) },
+                            onMoveNoteDirectlyToFolder = { noteId, folderId -> viewModel.moveNoteDirectlyToFolder(noteId, folderId) },
                             modifier = Modifier.fillMaxSize()
                         )
                     }
@@ -850,10 +984,14 @@ fun MainVoiceNotesScreen(
                                         items(folders) { folder ->
                                             FolderChipCard(
                                                 folder = folder,
+                                                isHovered = hoveredFolderId == folder.id,
                                                 onClick = { viewModel.navigateToFolder(folder.id) },
                                                 onRename = { viewModel.openRenameFolderDialog(folder) },
                                                 onDelete = { viewModel.confirmDeleteFolder(folder) },
-                                                onTogglePin = { viewModel.togglePinFolder(folder) }
+                                                onTogglePin = { viewModel.togglePinFolder(folder) },
+                                                modifier = Modifier.onGloballyPositioned { coords ->
+                                                    folderBounds[folder.id] = coords.boundsInRoot()
+                                                }
                                             )
                                         }
                                     }
@@ -872,10 +1010,14 @@ fun MainVoiceNotesScreen(
                                         items(pinnedFolders) { folder ->
                                             FolderChipCard(
                                                 folder = folder,
+                                                isHovered = hoveredFolderId == folder.id,
                                                 onClick = { viewModel.navigateToFolder(folder.id) },
                                                 onRename = { viewModel.openRenameFolderDialog(folder) },
                                                 onDelete = { viewModel.confirmDeleteFolder(folder) },
-                                                onTogglePin = { viewModel.togglePinFolder(folder) }
+                                                onTogglePin = { viewModel.togglePinFolder(folder) },
+                                                modifier = Modifier.onGloballyPositioned { coords ->
+                                                    folderBounds[folder.id] = coords.boundsInRoot()
+                                                }
                                             )
                                         }
                                     }
@@ -883,25 +1025,41 @@ fun MainVoiceNotesScreen(
                                 }
                             }
 
-                            // Section: Voice Notes Header if notes exist
-                            if (voiceNotes.isNotEmpty() || uiState.searchQuery.isNotBlank()) {
-                                item {
-                                    Row(
+                            // Section: Voice Notes Header & shifted Create New Folder button (as in screenshot)
+                            item {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    val headerTitle = when {
+                                        uiState.searchQuery.isNotBlank() -> "Results"
+                                        currentTab == MainTab.PINS -> "Pinned (${voiceNotes.size})"
+                                        else -> "Notes (${voiceNotes.size})"
+                                    }
+                                    Text(
+                                        text = headerTitle,
+                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+
+                                    // Shifted create new folder option to below UI section as shown in screenshot
+                                    IconButton(
+                                        onClick = {
+                                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            viewModel.openNewFolderDialog()
+                                        },
                                         modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
+                                            .size(34.dp)
+                                            .testTag("create_new_folder_header_button")
                                     ) {
-                                        val headerTitle = when {
-                                            uiState.searchQuery.isNotBlank() -> "Results"
-                                            currentTab == MainTab.PINS -> "Pinned (${voiceNotes.size})"
-                                            else -> "Notes (${voiceNotes.size})"
-                                        }
-                                        Text(
-                                            text = headerTitle,
-                                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        Icon(
+                                            imageVector = Icons.Default.CreateNewFolder,
+                                            contentDescription = "New Folder",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(22.dp)
                                         )
                                     }
                                 }
@@ -925,11 +1083,45 @@ fun MainVoiceNotesScreen(
                             } else {
                                 // Voice Notes Items
                                 items(voiceNotes, key = { it.id }) { note ->
+                                    val isDraggingThis = draggedNote?.id == note.id
                                     VoiceNoteListItem(
                                         note = note,
                                         isPlaying = playerState.isPlaying && playerState.currentNoteId == note.id,
+                                        isMinimalMode = false,
+                                        isDragging = isDraggingThis,
+                                        onDragStart = { offset ->
+                                            draggedNote = note
+                                            dragPosition = offset
+                                        },
+                                        onDrag = { dragAmount ->
+                                            dragPosition += dragAmount
+                                            val hovered = folderBounds.entries.find { it.value.contains(dragPosition) }?.key
+                                            if (hovered != hoveredFolderId) {
+                                                hoveredFolderId = hovered
+                                                if (hovered != null) {
+                                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                }
+                                            }
+                                        },
+                                        onDragEnd = {
+                                            val targetFolder = hoveredFolderId
+                                            val noteToMove = draggedNote
+                                            if (noteToMove != null && targetFolder != null && noteToMove.folderId != targetFolder) {
+                                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                viewModel.moveNoteDirectlyToFolder(noteToMove.id, targetFolder)
+                                            }
+                                            draggedNote = null
+                                            hoveredFolderId = null
+                                        },
+                                        onDragCancel = {
+                                            draggedNote = null
+                                            hoveredFolderId = null
+                                        },
                                         onClick = {
-                                            if (note.audioFilePath.isBlank()) {
+                                            val isDrawing = note.noteContent.contains("![Handwritten Note]") || note.noteFileName.endsWith(".png") || note.noteContent.endsWith(".png")
+                                            if (isDrawing) {
+                                                viewModel.openDrawingModal(note)
+                                            } else if (note.audioFilePath.isBlank()) {
                                                 viewModel.openFullScreenEditorForNote(note)
                                             } else {
                                                 viewModel.openNoteDetail(note)
@@ -949,6 +1141,18 @@ fun MainVoiceNotesScreen(
             }
         }
     }
+
+        // Handwritten Canvas Drawing Board
+        if (uiState.showHandwrittenCanvas) {
+            HandwrittenCanvasBoard(
+                initialTitle = uiState.canvasInitialTitle,
+                initialBitmap = uiState.canvasInitialBitmap,
+                onDismiss = { viewModel.dismissHandwrittenCanvas() },
+                onSave = { title, bitmap ->
+                    viewModel.saveHandwrittenCanvasNote(title, bitmap)
+                }
+            )
+        }
 
         // Floating FaceCam Selfie Overlay (renders in-app only if system-wide WindowManager overlay is not active)
         if ((isFaceCamOverlayShowing || uiState.isFaceCamActive) && !isSystemOverlayActive) {
@@ -1010,6 +1214,68 @@ fun MainVoiceNotesScreen(
                 }
             )
         }
+
+        // Floating drag preview badge when dragging a note into a folder
+        if (draggedNote != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .offset {
+                            IntOffset(
+                                (dragPosition.x - 80.dp.toPx()).toInt().coerceAtLeast(16),
+                                (dragPosition.y - 30.dp.toPx()).toInt().coerceAtLeast(16)
+                            )
+                        }
+                        .shadow(12.dp, RoundedCornerShape(16.dp))
+                        .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp)),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    tonalElevation = 8.dp
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = when {
+                                draggedNote!!.noteContent.contains("![Handwritten Note]") || draggedNote!!.noteFileName.endsWith(".png") -> Icons.Default.Brush
+                                draggedNote!!.audioFilePath.isBlank() -> Icons.Default.EditNote
+                                else -> Icons.Default.Mic
+                            },
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = draggedNote!!.title,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                            maxLines = 1
+                        )
+                        if (hoveredFolderId != null) {
+                            val targetName = folders.find { it.id == hoveredFolderId }?.name
+                                ?: pinnedFolders.find { it.id == hoveredFolderId }?.name
+                                ?: "Folder"
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.primary
+                            ) {
+                                Text(
+                                    text = "➔ Drop in $targetName",
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1058,21 +1324,25 @@ fun BreadcrumbsBar(
 @Composable
 fun FolderChipCard(
     folder: FolderEntity,
+    isHovered: Boolean = false,
     onClick: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
-    onTogglePin: () -> Unit = {}
+    onTogglePin: () -> Unit = {},
+    modifier: Modifier = Modifier
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
     Card(
-        modifier = Modifier
+        modifier = modifier
             .clickable { onClick() }
             .testTag("folder_item_${folder.id}"),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
-        )
+            containerColor = if (isHovered) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
+        ),
+        border = if (isHovered) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -1152,6 +1422,12 @@ fun FolderChipCard(
 fun VoiceNoteListItem(
     note: VoiceNoteEntity,
     isPlaying: Boolean,
+    isMinimalMode: Boolean = false,
+    isDragging: Boolean = false,
+    onDragStart: (Offset) -> Unit = {},
+    onDrag: (Offset) -> Unit = {},
+    onDragEnd: () -> Unit = {},
+    onDragCancel: () -> Unit = {},
     onClick: () -> Unit,
     onTogglePlay: () -> Unit,
     onTogglePin: () -> Unit,
@@ -1178,20 +1454,38 @@ fun VoiceNoteListItem(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .padding(horizontal = 16.dp, vertical = if (isMinimalMode) 3.dp else 6.dp)
+            .pointerInput(note.id) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { offset ->
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onDragStart(offset)
+                    },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        onDrag(dragAmount)
+                    },
+                    onDragEnd = { onDragEnd() },
+                    onDragCancel = { onDragCancel() }
+                )
+            }
             .clickable { onClick() }
             .testTag("voice_note_item_${note.id}"),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(if (isMinimalMode) 12.dp else 20.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (isPlaying) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-            else MaterialTheme.colorScheme.surface
+            containerColor = when {
+                isDragging -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+                isPlaying -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                else -> MaterialTheme.colorScheme.surface
+            }
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp)
+        border = if (isDragging) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isMinimalMode) 0.5.dp else 1.5.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
+                .padding(if (isMinimalMode) 8.dp else 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Play / Pause or Note icon
@@ -1199,31 +1493,33 @@ fun VoiceNoteListItem(
                 FilledTonalIconButton(
                     onClick = onClick,
                     modifier = Modifier
-                        .size(46.dp)
+                        .size(if (isMinimalMode) 34.dp else 46.dp)
                         .testTag("open_written_note_${note.id}")
                 ) {
                     Icon(
                         imageVector = Icons.Default.EditNote,
                         contentDescription = "Open Note",
-                        tint = MaterialTheme.colorScheme.primary
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(if (isMinimalMode) 18.dp else 24.dp)
                     )
                 }
             } else {
                 FilledTonalIconButton(
                     onClick = onTogglePlay,
                     modifier = Modifier
-                        .size(46.dp)
+                        .size(if (isMinimalMode) 34.dp else 46.dp)
                         .testTag("play_button_note_${note.id}")
                 ) {
                     Icon(
                         imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                         contentDescription = if (isPlaying) "Pause" else "Play",
-                        tint = if (isPlaying) RecorderRed else MaterialTheme.colorScheme.onSurface
+                        tint = if (isPlaying) RecorderRed else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(if (isMinimalMode) 18.dp else 24.dp)
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(if (isMinimalMode) 10.dp else 14.dp))
 
             // Note Info & Written Notes preview
             Column(modifier = Modifier.weight(1f)) {
@@ -1385,8 +1681,13 @@ fun VoiceNoteListItem(
 }
 
 @Composable
-fun VoiceNotesTitleWithRedDot() {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+fun VoiceNotesTitle() {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .padding(horizontal = 4.dp, vertical = 2.dp)
+            .testTag("app_title_voice_notes")
+    ) {
         Text(
             text = "Voice Notes",
             style = MaterialTheme.typography.titleLarge.copy(
@@ -1394,13 +1695,6 @@ fun VoiceNotesTitleWithRedDot() {
                 letterSpacing = (-0.5).sp
             ),
             color = MaterialTheme.colorScheme.onBackground
-        )
-        Spacer(modifier = Modifier.width(6.dp))
-        Box(
-            modifier = Modifier
-                .size(7.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary)
         )
     }
 }
@@ -1438,5 +1732,325 @@ fun EmptyNotesView(
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
             color = MaterialTheme.colorScheme.onSurface
         )
+    }
+}
+
+/**
+ * Minimal Mode Quick Action Bar with +Mic, +Pen, and +Document.
+ */
+@Composable
+fun MinimalModeActionsRow(
+    onStartRecording: () -> Unit,
+    onStartDrawing: () -> Unit,
+    onStartWriting: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val haptics = LocalHapticFeedback.current
+
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // +Mic (Start Recording)
+            FilledTonalButton(
+                onClick = {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onStartRecording()
+                },
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f),
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer
+                ),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                modifier = Modifier.testTag("minimal_add_mic_button")
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(3.dp))
+                Icon(Icons.Default.Mic, contentDescription = "Start Recording", modifier = Modifier.size(18.dp))
+            }
+
+            // +Pen (Start Drawing)
+            FilledTonalButton(
+                onClick = {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onStartDrawing()
+                },
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                ),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                modifier = Modifier.testTag("minimal_add_pen_button")
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(3.dp))
+                Icon(Icons.Default.Edit, contentDescription = "Start Drawing", modifier = Modifier.size(18.dp))
+            }
+
+            // +Document (Start Writing)
+            FilledTonalButton(
+                onClick = {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onStartWriting()
+                },
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                ),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                modifier = Modifier.testTag("minimal_add_doc_button")
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(3.dp))
+                Icon(Icons.Default.Description, contentDescription = "Start Writing", modifier = Modifier.size(18.dp))
+            }
+        }
+    }
+}
+
+/**
+ * Minimal Mode Square Preview Card for documents, sketches, and recordings.
+ */
+@Composable
+fun VoiceNoteSquarePreviewCard(
+    note: VoiceNoteEntity,
+    isPlaying: Boolean,
+    onClick: () -> Unit,
+    onTogglePlay: () -> Unit,
+    onTogglePin: () -> Unit,
+    onRename: () -> Unit,
+    onMove: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val haptics = LocalHapticFeedback.current
+    var showMenu by remember { mutableStateOf(false) }
+    val isDrawing = note.noteContent.contains("![Handwritten Note]") || note.noteFileName.endsWith(".png") || note.noteContent.endsWith(".png")
+    val hasAudio = note.audioFilePath.isNotBlank() && note.durationMs > 0L
+
+    val drawingBitmap = remember(note.id, note.noteFilePath, isDrawing) {
+        if (isDrawing) {
+            val file = java.io.File(note.noteFilePath)
+            if (file.exists()) {
+                try {
+                    android.graphics.BitmapFactory.decodeFile(file.absolutePath)
+                } catch (_: Exception) { null }
+            } else null
+        } else null
+    }
+
+    val formattedDate = remember(note.createdAt) {
+        val sdf = SimpleDateFormat("MMM dd", Locale.getDefault())
+        sdf.format(Date(note.createdAt))
+    }
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .clickable(onClick = onClick)
+            .testTag("square_preview_note_${note.id}"),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isPlaying) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+        ),
+        border = BorderStroke(
+            1.dp,
+            if (note.isPinned) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(10.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            // Header Row: Type Icon + Pin + 3-dots Menu
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = when {
+                        isDrawing -> MaterialTheme.colorScheme.secondaryContainer
+                        hasAudio -> MaterialTheme.colorScheme.errorContainer
+                        else -> MaterialTheme.colorScheme.primaryContainer
+                    },
+                    modifier = Modifier.size(26.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = when {
+                                isDrawing -> Icons.Default.Brush
+                                hasAudio -> Icons.Default.Mic
+                                else -> Icons.Default.Description
+                            },
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = when {
+                                isDrawing -> MaterialTheme.colorScheme.onSecondaryContainer
+                                hasAudio -> MaterialTheme.colorScheme.onErrorContainer
+                                else -> MaterialTheme.colorScheme.onPrimaryContainer
+                            }
+                        )
+                    }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (note.isPinned) {
+                        Icon(
+                            imageVector = Icons.Filled.PushPin,
+                            contentDescription = "Pinned",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+
+                    Box {
+                        IconButton(
+                            onClick = { showMenu = true },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.MoreVert,
+                                contentDescription = "Options",
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+
+                        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text(if (note.isPinned) "Unpin Note" else "Pin Note") },
+                                leadingIcon = {
+                                    Icon(
+                                        if (note.isPinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
+                                        contentDescription = null
+                                    )
+                                },
+                                onClick = {
+                                    showMenu = false
+                                    onTogglePin()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Rename") },
+                                leadingIcon = { Icon(Icons.Default.DriveFileRenameOutline, contentDescription = null) },
+                                onClick = {
+                                    showMenu = false
+                                    onRename()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Move to Folder") },
+                                leadingIcon = { Icon(Icons.Default.DriveFileMove, contentDescription = null) },
+                                onClick = {
+                                    showMenu = false
+                                    onMove()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+                                leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+                                onClick = {
+                                    showMenu = false
+                                    onDelete()
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Center: Document preview
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(vertical = 4.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                when {
+                    isDrawing && drawingBitmap != null -> {
+                        Image(
+                            bitmap = drawingBitmap.asImageBitmap(),
+                            contentDescription = note.title,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color.White),
+                            contentScale = ContentScale.Fit
+                        )
+                    }
+                    hasAudio -> {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            FilledTonalIconButton(
+                                onClick = onTogglePlay,
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = "Play/Pause",
+                                    tint = if (isPlaying) RecorderRed else MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(2.dp))
+                            val totalSec = note.durationMs / 1000
+                            Text(
+                                text = String.format(Locale.getDefault(), "%02d:%02d", totalSec / 60, totalSec % 60),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                    else -> {
+                        Text(
+                            text = if (note.noteContent.isNotBlank()) note.noteContent else "(Empty Note)",
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 14.sp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 4,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+
+            // Bottom: Title & Date
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = note.title,
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold, fontSize = 12.sp),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = formattedDate,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                )
+            }
+        }
     }
 }

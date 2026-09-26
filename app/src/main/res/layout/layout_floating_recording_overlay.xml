@@ -32,55 +32,76 @@
         android:textStyle="bold"
         android:fontFamily="sans-serif-medium" />
 
-    <!-- Vertical separator -->
-    <View
-        android:layout_width="1dp"
-        android:layout_height="22dp"
-        android:layout_marginStart="8dp"
-        android:layout_marginEnd="8dp"
-        android:background="#384252" />
-
-    <!-- Flag timestamp button -->
+    <!-- Minimize Overlay Button -->
     <ImageButton
-        android:id="@+id/float_btn_flag"
-        android:layout_width="36dp"
-        android:layout_height="36dp"
+        android:id="@+id/float_btn_minimize"
+        android:layout_width="32dp"
+        android:layout_height="32dp"
+        android:layout_marginStart="2dp"
         android:background="@drawable/bg_floating_action"
-        android:src="@drawable/ic_float_flag"
+        android:src="@drawable/ic_float_minimize"
         android:scaleType="centerInside"
-        android:contentDescription="Flag Timestamp" />
+        android:contentDescription="Minimize Overlay" />
 
-    <!-- Pause / Resume button -->
-    <ImageButton
-        android:id="@+id/float_btn_pause_resume"
-        android:layout_width="36dp"
-        android:layout_height="36dp"
-        android:layout_marginStart="4dp"
-        android:background="@drawable/bg_floating_action"
-        android:src="@drawable/ic_float_pause"
-        android:scaleType="centerInside"
-        android:contentDescription="Pause or Resume Recording" />
+    <!-- Actions Container (collapsible) -->
+    <LinearLayout
+        android:id="@+id/float_actions_layout"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:visibility="visible">
 
-    <!-- Stop & Save button -->
-    <ImageButton
-        android:id="@+id/float_btn_stop"
-        android:layout_width="36dp"
-        android:layout_height="36dp"
-        android:layout_marginStart="4dp"
-        android:background="@drawable/bg_floating_action"
-        android:src="@drawable/ic_float_stop"
-        android:scaleType="centerInside"
-        android:contentDescription="Stop and Save Recording" />
+        <!-- Vertical separator -->
+        <View
+            android:layout_width="1dp"
+            android:layout_height="22dp"
+            android:layout_marginStart="6dp"
+            android:layout_marginEnd="6dp"
+            android:background="#384252" />
 
-    <!-- Open App button -->
-    <ImageButton
-        android:id="@+id/float_btn_open"
-        android:layout_width="36dp"
-        android:layout_height="36dp"
-        android:layout_marginStart="4dp"
-        android:background="@drawable/bg_floating_action"
-        android:src="@drawable/ic_float_open"
-        android:scaleType="centerInside"
-        android:contentDescription="Open App" />
+        <!-- Flag timestamp button -->
+        <ImageButton
+            android:id="@+id/float_btn_flag"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="@drawable/bg_floating_action"
+            android:src="@drawable/ic_float_flag"
+            android:scaleType="centerInside"
+            android:contentDescription="Flag Timestamp" />
+
+        <!-- Pause / Resume button -->
+        <ImageButton
+            android:id="@+id/float_btn_pause_resume"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="4dp"
+            android:background="@drawable/bg_floating_action"
+            android:src="@drawable/ic_float_pause"
+            android:scaleType="centerInside"
+            android:contentDescription="Pause or Resume Recording" />
+
+        <!-- Stop & Save button -->
+        <ImageButton
+            android:id="@+id/float_btn_stop"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="4dp"
+            android:background="@drawable/bg_floating_action"
+            android:src="@drawable/ic_float_stop"
+            android:scaleType="centerInside"
+            android:contentDescription="Stop and Save Recording" />
+
+        <!-- Open App button -->
+        <ImageButton
+            android:id="@+id/float_btn_open"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="4dp"
+            android:background="@drawable/bg_floating_action"
+            android:src="@drawable/ic_float_open"
+            android:scaleType="centerInside"
+            android:contentDescription="Open App" />
+    </LinearLayout>
 
 </LinearLayout>

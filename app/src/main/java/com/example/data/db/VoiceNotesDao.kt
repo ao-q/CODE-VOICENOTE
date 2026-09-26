@@ -90,4 +90,19 @@ interface VoiceNotesDao {
 
     @Query("DELETE FROM timestamp_markers WHERE voiceNoteId = :noteId")
     suspend fun deleteMarkersForNote(noteId: Long)
+
+    @Query("SELECT * FROM folders WHERE name = :name AND ((parentId IS NULL AND :parentId IS NULL) OR parentId = :parentId) LIMIT 1")
+    suspend fun getFolderByNameAndParent(name: String, parentId: Long?): FolderEntity?
+
+    @Query("SELECT * FROM voice_notes WHERE (audioFilePath != '' AND audioFilePath = :audioPath) OR (noteFilePath != '' AND noteFilePath = :notePath) LIMIT 1")
+    suspend fun findVoiceNoteByFilePath(audioPath: String, notePath: String): VoiceNoteEntity?
+
+    @Query("SELECT * FROM voice_notes WHERE title = :title AND ((folderId IS NULL AND :folderId IS NULL) OR folderId = :folderId) LIMIT 1")
+    suspend fun findVoiceNoteByTitleAndFolder(title: String, folderId: Long?): VoiceNoteEntity?
+
+    @Query("SELECT * FROM voice_notes")
+    suspend fun getAllVoiceNotesList(): List<VoiceNoteEntity>
+
+    @Query("SELECT * FROM folders")
+    suspend fun getAllFoldersList(): List<FolderEntity>
 }

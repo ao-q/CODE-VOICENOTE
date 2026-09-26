@@ -65,27 +65,18 @@ fun RenameNoteDialog(
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "Rename Voice Note",
+                        text = "Rename",
                         style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onSurface
                     )
                 }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = "Renaming automatically synchronizes the titled folder, .mp3 file, and .md markdown notes file on local storage.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    lineHeight = 18.sp
-                )
 
                 Spacer(modifier = Modifier.height(16.dp))
 
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
-                    label = { Text("Note Title") },
+                    label = { Text("Title") },
                     singleLine = true,
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier
@@ -119,7 +110,7 @@ fun RenameNoteDialog(
                         shape = RoundedCornerShape(20.dp),
                         modifier = Modifier.testTag("confirm_rename_button")
                     ) {
-                        Text("Rename & Sync")
+                        Text("Rename")
                     }
                 }
             }

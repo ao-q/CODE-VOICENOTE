@@ -491,22 +491,15 @@ fun NoteDetailScreen(
                                             .clickable { isPreviewMode = false }
                                             .testTag("detail_notes_edit_tab")
                                     ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                            verticalAlignment = Alignment.CenterVertically
+                                        Box(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                            contentAlignment = Alignment.Center
                                         ) {
                                             Icon(
                                                 Icons.Default.Edit,
                                                 contentDescription = "Edit",
-                                                modifier = Modifier.size(13.dp),
+                                                modifier = Modifier.size(16.dp),
                                                 tint = if (!isPreviewMode) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                            Spacer(modifier = Modifier.width(3.dp))
-                                            Text(
-                                                text = "Edit",
-                                                fontSize = 11.sp,
-                                                fontWeight = if (!isPreviewMode) FontWeight.Bold else FontWeight.Medium,
-                                                color = if (!isPreviewMode) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
                                     }
@@ -518,22 +511,15 @@ fun NoteDetailScreen(
                                             .clickable { isPreviewMode = true }
                                             .testTag("detail_notes_preview_tab")
                                     ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                            verticalAlignment = Alignment.CenterVertically
+                                        Box(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                            contentAlignment = Alignment.Center
                                         ) {
                                             Icon(
                                                 Icons.Default.Visibility,
                                                 contentDescription = "Preview",
-                                                modifier = Modifier.size(13.dp),
+                                                modifier = Modifier.size(16.dp),
                                                 tint = if (isPreviewMode) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                            Spacer(modifier = Modifier.width(3.dp))
-                                            Text(
-                                                text = "Preview",
-                                                fontSize = 11.sp,
-                                                fontWeight = if (isPreviewMode) FontWeight.Bold else FontWeight.Medium,
-                                                color = if (isPreviewMode) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
                                     }
